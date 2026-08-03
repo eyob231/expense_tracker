@@ -1,97 +1,155 @@
-This is a new [**React Native**](https://reactnative.dev) project, bootstrapped using [`@react-native-community/cli`](https://github.com/react-native-community/cli).
+# 💰 Expense Tracker — Smart SMS-Based Finance Manager
 
-# Getting Started
+A **React Native** Android app that automatically tracks your income and expenses by reading SMS messages from Ethiopian banks (CBE Birr, Telebirr, and others). No manual data entry needed — just install, grant SMS permission, and your transactions appear automatically.
 
-> **Note**: Make sure you have completed the [Set Up Your Environment](https://reactnative.dev/docs/set-up-your-environment) guide before proceeding.
+---
 
-## Step 1: Start Metro
+## ✨ Features
 
-First, you will need to run **Metro**, the JavaScript build tool for React Native.
+- 📩 **Automatic SMS Parsing** — Reads bank SMS notifications from CBE Birr, Telebirr, and other Ethiopian banks in both English and Amharic
+- 📊 **Dashboard** — Visual summary of income vs. expenses with charts and balance overview
+- 🗂️ **Transaction History** — Full list of all detected transactions with filtering and search
+- 🏷️ **Auto-Categorization** — Automatically classifies transactions (Food & Dining, Transportation, Shopping, Salary, UPI Transfers, etc.)
+- 🔁 **SMS Simulator** — Test SMS parsing without a real bank message
+- 💾 **Local Storage** — All data stored securely on-device using AsyncStorage (no cloud, no account needed)
+- 🎨 **Modern UI** — Clean dark-themed interface with charts powered by `react-native-chart-kit`
 
-To start the Metro dev server, run the following command from the root of your React Native project:
+---
+
+## 📱 Screenshots
+
+> Dashboard · Transactions · Simulator
+
+---
+
+## 🏗️ Tech Stack
+
+| Layer | Technology |
+|-------|-----------|
+| Framework | React Native 0.86 |
+| Language | TypeScript |
+| Navigation | React Navigation (Bottom Tabs + Native Stack) |
+| Storage | AsyncStorage |
+| Charts | react-native-chart-kit + react-native-svg |
+| Icons | react-native-vector-icons |
+| Native Module | Kotlin (SmsModule, SmsReceiver) |
+| Testing | Jest |
+| Min Android | API 24 (Android 7.0) |
+
+---
+
+## 🚀 Getting Started
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) >= 22.11.0
+- [React Native environment](https://reactnative.dev/docs/set-up-your-environment) set up (Android SDK, JDK)
+- Android device or emulator
+
+### Installation
 
 ```sh
-# Using npm
+# 1. Clone the repository
+git clone <your-repo-url>
+cd expense_tracker
+
+# 2. Install dependencies
+npm install
+
+# 3. Start Metro bundler
 npm start
 
-# OR using Yarn
-yarn start
-```
-
-## Step 2: Build and run your app
-
-With Metro running, open a new terminal window/pane from the root of your React Native project, and use one of the following commands to build and run your Android or iOS app:
-
-### Android
-
-```sh
-# Using npm
+# 4. Run on Android (in a new terminal)
 npm run android
-
-# OR using Yarn
-yarn android
 ```
 
-### iOS
-
-For iOS, remember to install CocoaPods dependencies (this only needs to be run on first clone or after updating native deps).
-
-The first time you create a new project, run the Ruby bundler to install CocoaPods itself:
+### Running Tests
 
 ```sh
-bundle install
+npm test
 ```
 
-Then, and every time you update your native dependencies, run:
+---
+
+## 📦 Building a Release APK
+
+To build a release APK for sharing:
 
 ```sh
-bundle exec pod install
+cd android
+.\gradlew assembleRelease
 ```
 
-For more information, please visit [CocoaPods Getting Started guide](https://guides.cocoapods.org/using/getting-started.html).
-
-```sh
-# Using npm
-npm run ios
-
-# OR using Yarn
-yarn ios
+The APK will be at:
+```
+android/app/build/outputs/apk/release/app-release.apk
 ```
 
-If everything is set up correctly, you should see your new app running in the Android Emulator, iOS Simulator, or your connected device.
+> **Note:** You need a release keystore configured in `android/app/build.gradle` to sign the APK.
 
-This is one way to run your app — you can also build it directly from Android Studio or Xcode.
+---
 
-## Step 3: Modify your app
+## 🏛️ Project Structure
 
-Now that you have successfully run the app, let's make changes!
+```
+expense_tracker/
+├── src/
+│   ├── screens/
+│   │   ├── DashboardScreen.tsx      # Home screen with charts & summary
+│   │   ├── TransactionsScreen.tsx   # Full transaction list & filters
+│   │   └── SimulatorScreen.tsx      # SMS simulator for testing
+│   ├── parser/
+│   │   └── index.ts                 # SMS parsing & auto-categorization logic
+│   ├── deviceSms.ts                 # Native SMS reading bridge
+│   ├── storage.ts                   # AsyncStorage CRUD operations
+│   └── theme.ts                     # App color palette & design tokens
+├── android/
+│   └── app/src/main/java/.../
+│       ├── SmsModule.kt             # Native module: reads device SMS
+│       ├── SmsReceiver.kt           # BroadcastReceiver: listens for new SMS
+│       └── SmsPackage.kt            # React Native package registration
+├── __tests__/
+│   └── SmsParser.test.ts            # Unit tests for SMS parsing logic
+└── App.tsx                          # Root component & navigation setup
+```
 
-Open `App.tsx` in your text editor of choice and make some changes. When you save, your app will automatically update and reflect these changes — this is powered by [Fast Refresh](https://reactnative.dev/docs/fast-refresh).
+---
 
-When you want to forcefully reload, for example to reset the state of your app, you can perform a full reload:
+## 🔐 Permissions
 
-- **Android**: Press the <kbd>R</kbd> key twice or select **"Reload"** from the **Dev Menu**, accessed via <kbd>Ctrl</kbd> + <kbd>M</kbd> (Windows/Linux) or <kbd>Cmd ⌘</kbd> + <kbd>M</kbd> (macOS).
-- **iOS**: Press <kbd>R</kbd> in iOS Simulator.
+The app requests the following Android permissions:
 
-## Congratulations! :tada:
+| Permission | Purpose |
+|-----------|---------|
+| `READ_SMS` | Read existing bank SMS messages on device |
+| `RECEIVE_SMS` | Listen for incoming bank SMS notifications |
+| `INTERNET` | (Reserved for future cloud sync features) |
 
-You've successfully run and modified your React Native App. :partying_face:
+> All data stays on your device. No data is sent to any server.
 
-### Now what?
+---
 
-- If you want to add this new React Native code to an existing application, check out the [Integration guide](https://reactnative.dev/docs/integration-with-existing-apps).
-- If you're curious to learn more about React Native, check out the [docs](https://reactnative.dev/docs/getting-started).
+## 🧪 Supported Banks & SMS Formats
 
-# Troubleshooting
+The SMS parser supports messages from:
 
-If you're having issues getting the above steps to work, see the [Troubleshooting](https://reactnative.dev/docs/troubleshooting) page.
+- **CBE Birr** (Commercial Bank of Ethiopia)
+- **Telebirr** (Ethio Telecom mobile money)
+- Other Ethiopian banks with standard credit/debit SMS formats
+- Amharic language SMS messages (ቀሪ ሂሳብ, ወደ, ከ, etc.)
 
-# Learn More
+---
 
-To learn more about React Native, take a look at the following resources:
+## 🤝 Contributing
 
-- [React Native Website](https://reactnative.dev) - learn more about React Native.
-- [Getting Started](https://reactnative.dev/docs/environment-setup) - an **overview** of React Native and how setup your environment.
-- [Learn the Basics](https://reactnative.dev/docs/getting-started) - a **guided tour** of the React Native **basics**.
-- [Blog](https://reactnative.dev/blog) - read the latest official React Native **Blog** posts.
-- [`@facebook/react-native`](https://github.com/facebook/react-native) - the Open Source; GitHub **repository** for React Native.
+1. Fork the repo
+2. Create a feature branch (`git checkout -b feature/your-feature`)
+3. Commit your changes (`git commit -m 'feat: add your feature'`)
+4. Push to the branch (`git push origin feature/your-feature`)
+5. Open a Pull Request
+
+---
+
+## 📄 License
+
+This project is private and not licensed for public redistribution.
