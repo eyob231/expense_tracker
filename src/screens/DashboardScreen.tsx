@@ -26,7 +26,7 @@ import {
   addTransaction,
   clearSmsTransactionsAndResetSync,
 } from '../storage';
-import { Transaction } from '../parser';
+import { Transaction, getAccountBalances, BankId } from '../parser';
 import { Theme, CATEGORY_META } from '../theme';
 import { useTheme, useThemedStyles } from '../themeContext';
 import AddTransactionModal from '../components/AddTransactionModal';
@@ -35,6 +35,14 @@ import { syncDeviceSms, subscribeToIncomingSms } from '../deviceSms';
 import { SkeletonBalanceCard, SkeletonTxCard } from '../components/SkeletonCard';
 import SectionHeader from '../components/SectionHeader';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+
+// Visual identity for each bank's balance card.
+const BANK_META: Record<BankId, { emoji: string; color: (t: Theme) => string }> = {
+  cbe: { emoji: '🏦', color: t => t.colors.bankCbe },
+  'cbe birr': { emoji: '🟢', color: t => t.colors.bankCbeBirr },
+  telebirr: { emoji: '📱', color: t => t.colors.bankTelebirr },
+  other: { emoji: '💳', color: t => t.colors.textMuted },
+};
 
 // ── Count-up animation hook ────────────────────────────────────────
 function useCountUp(target: number, duration = 900) {
@@ -249,10 +257,11 @@ export default function DashboardScreen() {
     return () => clearTimeout(timer);
   }, [loading, unreviewedTx]);
 
-  // Account balances (most recent reading per bank)
-  const cbeBalance = transactions.find(t => t.sender.toLowerCase() === 'cbe' && t.balance > 0)?.balance;
-  const telebirrBalance = transactions.find(t => t.sender.toLowerCase() === 'telebirr' && t.balance > 0)?.balance;
-  const cbeBirrBalance = transactions.find(t => t.sender.toLowerCase() === 'cbe birr' && t.balance > 0)?.balance;
+  // Account balances — the latest reading *per bank and per account*.
+  // A balance is only ever taken from a message that actually carried a
+  // balance for that same account, so a newer message from another bank (or
+  // another account) can never overwrite it.
+  const accountBalances = getAccountBalances(transactions);
 
   // Sparkline: last 7 daily totals
   const sparkValues = Array.from({ length: 7 }, (_, i) => {
@@ -462,42 +471,23 @@ export default function DashboardScreen() {
             )}
 
             {/* ── ACCOUNT BALANCES ── */}
-            {(cbeBalance !== undefined || cbeBirrBalance !== undefined || telebirrBalance !== undefined) && (
+            {accountBalances.length > 0 && (
               <>
                 <View style={styles.sectionHeaderWrap}>
-                  <SectionHeader label="Account balances" sub="Latest reading" />
+                  <SectionHeader label="Account balances" sub="Latest reading per account" />
                 </View>
                 <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bankScroll}>
-                  {cbeBalance !== undefined && (
+                  {accountBalances.map(acct => (
                     <BankCard
-                      emoji="🏦"
-                      name="CBE"
-                      balance={cbeBalance}
-                      color={theme.colors.bankCbe}
+                      key={acct.key}
+                      emoji={BANK_META[acct.bank].emoji}
+                      name={acct.label}
+                      balance={acct.balance}
+                      color={BANK_META[acct.bank].color(theme)}
                       hidden={isCbeHidden}
                       onToggle={() => setIsCbeHidden(h => !h)}
                     />
-                  )}
-                  {cbeBirrBalance !== undefined && (
-                    <BankCard
-                      emoji="🟢"
-                      name="CBE Birr"
-                      balance={cbeBirrBalance}
-                      color={theme.colors.bankCbeBirr}
-                      hidden={isCbeHidden}
-                      onToggle={() => setIsCbeHidden(h => !h)}
-                    />
-                  )}
-                  {telebirrBalance !== undefined && (
-                    <BankCard
-                      emoji="📱"
-                      name="Telebirr"
-                      balance={telebirrBalance}
-                      color={theme.colors.bankTelebirr}
-                      hidden={isCbeHidden}
-                      onToggle={() => setIsCbeHidden(h => !h)}
-                    />
-                  )}
+                  ))}
                 </ScrollView>
               </>
             )}

@@ -6,6 +6,7 @@ import {
   CategoryMappings,
   normalizeText,
   extractCounterparty,
+  repairSenderFromBody,
 } from './parser';
 
 export type { CategoryRule };
@@ -14,6 +15,7 @@ const STORAGE_KEY = '@expense_tracker:transactions';
 const PERMISSION_KEY = '@expense_tracker:sms_permission_asked';
 const APP_INITIALIZED_KEY = '@expense_tracker:initialized';
 const CATEGORY_MAPPINGS_KEY = '@expense_tracker:category_mappings';
+const BANK_MIGRATION_KEY = '@expense_tracker:bank_labels_v2';
 
 export async function getCategoryMappings(): Promise<CategoryMappings> {
   try {
@@ -158,6 +160,41 @@ export async function clearAllTransactions(): Promise<void> {
     console.log('[Storage] All transactions cleared.');
   } catch (e) {
     console.error('[Storage] Error clearing transactions:', e);
+  }
+}
+
+/**
+ * One-time repair of sender labels written by an older classifier.
+ *
+ * Telebirr alerts arriving from short code 127 used to be filed under CBE, so
+ * the CBE card showed whatever balance the newest Telebirr message carried.
+ * Re-importing would fix that but would also discard per-transaction labels,
+ * so stored rows are relabelled in place using the message body.
+ *
+ * Returns how many transactions were corrected.
+ */
+export async function migrateBankLabels(): Promise<number> {
+  try {
+    const done = await AsyncStorage.getItem(BANK_MIGRATION_KEY);
+    if (done === 'true') return 0;
+
+    const transactions = await getTransactions();
+    let changed = 0;
+    const updated = transactions.map(tx => {
+      if (tx.isManual) return tx;
+      const corrected = repairSenderFromBody(tx.rawMessage, tx.sender);
+      if (!corrected) return tx;
+      changed++;
+      return { ...tx, sender: corrected };
+    });
+
+    if (changed > 0) await saveTransactions(updated);
+    await AsyncStorage.setItem(BANK_MIGRATION_KEY, 'true');
+    if (changed > 0) console.log(`[Storage] Relabelled ${changed} transactions to the correct bank.`);
+    return changed;
+  } catch (e) {
+    console.error('[Storage] Bank label migration failed:', e);
+    return 0;
   }
 }
 

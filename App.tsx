@@ -32,6 +32,7 @@ import {
   markSmsPermissionAsked,
   hasCompletedInitialSync,
   markInitialSyncDone,
+  migrateBankLabels,
 } from './src/storage';
 
 const Tab = createBottomTabNavigator();
@@ -183,6 +184,10 @@ function AppShell() {
     if (Platform.OS !== 'android') { setIsBooting(false); return; }
 
     try {
+      // One-time: fix transactions an older classifier filed under the wrong
+      // bank, so balance cards aren't built on mislabelled history.
+      await migrateBankLabels();
+
       const alreadyAsked = await hasAskedForSmsPermission();
       const alreadySynced = await hasCompletedInitialSync();
       const readGranted = await PermissionsAndroid.check(

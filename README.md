@@ -8,7 +8,8 @@ A **React Native** Android app that automatically tracks your income and expense
 
 - 📩 **Automatic SMS Parsing** — Reads bank SMS notifications from CBE Birr, Telebirr, and other Ethiopian banks in both English and Amharic. Numbers followed by a data/time unit (`1024 MB`, `2 GB`, `100 minutes`) are never mistaken for money, and amounts spelled out as words (`one hundred fifty Birr`) are understood
 - 🔄 **No manual syncing** — New bank messages are imported the moment they arrive. Messages received while the app was closed are queued natively and imported on next launch / foreground, so the inbox sync is just a safety net.
-- 📊 **Dashboard** — Spend-first summary with a 7-day trend, income and left-over, plus per-account balances
+- 📊 **Dashboard** — Spend-first summary with a 7-day trend, income and left-over, plus per-account balances. Each balance is read only from the latest message that carried a balance **for that same account**, so a newer message from another bank (or another CBE account) can never overwrite it
+- 🏦 **Correct bank attribution** — a message is assigned to a bank by its sender ID, then by the bank branding in the message body. Telebirr is not guessable from short code `127` (that code is Telebirr's, not CBE's), and an unidentifiable alert shows no balance card rather than a balance belonging to someone else
 - 🗂️ **Transaction History** — Full list of all detected transactions with filtering and search
 - 🏷️ **Auto-Categorization** — Automatically classifies transactions (Food & Dining, Transportation, Shopping, Salary, UPI Transfers, etc.)
 - ⭐ **Frequent Accounts** — Detects the accounts, phone numbers and payees you transact with most; one tap turns one into a rule that re-categorizes past and future transactions

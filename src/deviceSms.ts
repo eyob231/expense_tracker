@@ -13,14 +13,14 @@ const smsEventEmitter = SmsModule ? new NativeEventEmitter(SmsModule) : null;
 const KNOWN_BANK_SENDERS = [
   // User's banks (primary)
   'cbe',          // Commercial Bank of Ethiopia
-  '127',          // CBE short code
   'cbebirr',      // CBE Birr mobile wallet
   'cbe_birr',
   'cbe-birr',
-  // Telebirr
+  // Telebirr — 127 is Telebirr's short code (dial *127#), not CBE's.
   'telebirr',
   'telebir',
   '8036',         // Telebirr short code
+  '127',          // Telebirr short code
   'et-birr',
   // Other Ethiopian banks
   'awash',

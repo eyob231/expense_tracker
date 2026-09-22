@@ -335,6 +335,165 @@ export function looksLikeBankAlert(body: string): boolean {
   return hints.some(h => lower.includes(h));
 }
 
+export type BankId = 'cbe' | 'cbe birr' | 'telebirr' | 'other';
+
+const TELEBIRR_NAME = /(?:telebirr|telebir|ቴሌብር)/i;
+const CBE_BIRR_NAME = /(?:cbe[\s_-]*birr|cbebirr)/i;
+const CBE_NAME = /(?:commercial\s+bank\s+of\s+ethiopia|cbe|ንግድ\s*ባንክ|የኢትዮጵያ\s*ንግድ\s*ባንክ)/i;
+
+/**
+ * Which bank a *sender address* obviously belongs to, or null when the address
+ * is numeric/unknown. Ordered so that "CBE Birr" is never read as plain CBE.
+ */
+function bankFromAddress(address: string): BankId | null {
+  const addr = (address || '').toLowerCase();
+  if (!addr) return null;
+  if (TELEBIRR_NAME.test(addr) || addr.includes('8036')) return 'telebirr';
+  if (CBE_BIRR_NAME.test(addr)) return 'cbe birr';
+  if (CBE_NAME.test(addr)) return 'cbe';
+  return null;
+}
+
+/**
+ * Whichever bank brand appears first in the body wins — a message introduces
+ * itself ("Your telebirr account…") before it names the counterparty
+ * ("…payment to CBE Birr"), so position is the reliable signal.
+ */
+function bankFromBody(body: string): BankId | null {
+  const hits: { bank: BankId; index: number }[] = [];
+  const tele = body.search(TELEBIRR_NAME);
+  const birr = body.search(CBE_BIRR_NAME);
+  const cbe = body.search(CBE_NAME);
+  if (tele >= 0) hits.push({ bank: 'telebirr', index: tele });
+  if (birr >= 0) hits.push({ bank: 'cbe birr', index: birr });
+  if (cbe >= 0) hits.push({ bank: 'cbe', index: cbe });
+  if (hits.length === 0) return null;
+  // On a tie the more specific brand wins (cbe birr over cbe).
+  return hits.sort((a, b) => a.index - b.index)[0].bank;
+}
+
+/**
+ * Classify a message as CBE, CBE Birr, Telebirr or unknown.
+ *
+ * A named sender ID wins outright. Otherwise the body's own branding decides,
+ * and only then do we fall back to short codes — note that 127/126 belong to
+ * **Telebirr**, not CBE, which is why balances must never be guessed from an
+ * unclassified message.
+ */
+export function detectBank(body: string, senderAddress: string): BankId {
+  const fromAddress = bankFromAddress(senderAddress);
+  if (fromAddress) return fromAddress;
+  const fromBody = bankFromBody(body);
+  if (fromBody) return fromBody;
+  if (/^\+?\s*(?:127|126)$/.test((senderAddress || '').trim())) return 'telebirr';
+  return 'other';
+}
+
+/**
+ * Speech from a message that *owns* a brand, as opposed to merely naming it.
+ * "your telebirr account" means the money is Telebirr's; "payment to Telebirr"
+ * inside a CBE alert does not.
+ */
+const OWNS_TELEBIRR = /(?:your\s+telebirr\s+(?:account|wallet)|telebirr\s+(?:account|wallet)|የ\s*telebirr\s*ሂሳብ|ቴሌብር\s*ሂሳብ)/i;
+const OWNS_CBE = /(?:commercial\s+bank\s+of\s+ethiopia|ንግድ\s*ባንክ|(?:your|የ)\s*cbe\s*(?:account|wallet|ሂሳብ))/i;
+
+/**
+ * Best-effort repair of a *stored* sender label. The original address is not
+ * kept, so the body has to prove which bank it belongs to.
+ *
+ * Scoped to the one label the old classifier got wrong: Telebirr alerts that
+ * arrived from short code 127 were filed under CBE, which put a Telebirr
+ * balance in the CBE card. A CBE alert that merely names Telebirr as the payee
+ * still owns CBE branding, so it is left untouched.
+ */
+export function repairSenderFromBody(rawMessage: string | undefined, storedSender: string): BankId | null {
+  const stored = normalizeText(storedSender) as BankId;
+  if (stored !== 'cbe' && stored !== 'cbe birr') return null;
+  if (!rawMessage) return null;
+  if (OWNS_CBE.test(rawMessage)) return null;
+  return OWNS_TELEBIRR.test(rawMessage) ? 'telebirr' : null;
+}
+
+const MASKED_ACCOUNT_RE = /\b(\d{2,6}\*{2,}\d{2,4})\b/;
+const PLAIN_ACCOUNT_RE = /\baccount\s*(?:number)?\s*[:#]?\s*(\d{6,})\b/i;
+
+/** The account a balance belongs to: a masked account number if the SMS has one. */
+function extractAccount(rawMessage: string | undefined, description: string): string | null {
+  const text = `${description} ${rawMessage || ''}`;
+  const masked = text.match(MASKED_ACCOUNT_RE);
+  if (masked) return masked[1];
+  const plain = text.match(PLAIN_ACCOUNT_RE);
+  return plain ? plain[1] : null;
+}
+
+export interface AccountBalance {
+  /** Stable key: bank + account, so each account keeps its own reading. */
+  key: string;
+  bank: BankId;
+  /** Display name, disambiguated with the account suffix when needed. */
+  label: string;
+  account?: string;
+  balance: number;
+  /** Date of the message the reading came from. */
+  date: string;
+}
+
+const BANK_LABEL: Partial<Record<BankId, string>> = {
+  cbe: 'CBE',
+  'cbe birr': 'CBE Birr',
+  telebirr: 'Telebirr',
+};
+
+const BANK_ORDER: Partial<Record<BankId, number>> = { cbe: 0, 'cbe birr': 1, telebirr: 2 };
+
+/**
+ * Current balance for each account, taken **only** from messages that carried a
+ * balance for that same account. A message with no balance is skipped rather
+ * than treated as zero, and a balance reading is never borrowed from another
+ * bank's (or another account's) message — that is what made the CBE card show
+ * whichever message happened to arrive last.
+ */
+export function getAccountBalances(transactions: Transaction[]): AccountBalance[] {
+  const groups = new Map<string, AccountBalance>();
+
+  for (const tx of transactions) {
+    if (tx.isManual) continue;
+    if (!tx.balance || tx.balance <= 0) continue;
+    const bank = normalizeText(String(tx.sender || '')) as BankId;
+    if (!BANK_LABEL[bank]) continue;
+
+    const account =
+      bank === 'telebirr' ? undefined : extractAccount(tx.rawMessage, tx.description) || undefined;
+    const key = `${bank}|${account || 'main'}`;
+    const time = new Date(tx.date).getTime();
+    const existing = groups.get(key);
+    if (existing && new Date(existing.date).getTime() >= time) continue;
+    groups.set(key, {
+      key,
+      bank,
+      label: BANK_LABEL[bank] as string,
+      account,
+      balance: tx.balance,
+      date: tx.date,
+    });
+  }
+
+  const list = [...groups.values()].sort(
+    (a, b) =>
+      (BANK_ORDER[a.bank] as number) - (BANK_ORDER[b.bank] as number) ||
+      new Date(b.date).getTime() - new Date(a.date).getTime(),
+  );
+
+  // Only spell out "··1234" when a bank genuinely has several accounts.
+  const perBank = new Map<string, number>();
+  for (const entry of list) perBank.set(entry.bank, (perBank.get(entry.bank) || 0) + 1);
+
+  return list.map(entry => {
+    if ((perBank.get(entry.bank) || 0) < 2 || !entry.account) return entry;
+    return { ...entry, label: `${entry.label} ··${entry.account.replace(/\D/g, '').slice(-4)}` };
+  });
+}
+
 export function parseSMS(
   body: string,
   sender: string,
@@ -347,13 +506,13 @@ export function parseSMS(
     return null; // Ignore non-transaction messages like OTPs or promos
   }
 
-  const senderLower = (sender || '').toLowerCase();
   const ts = timestamp || Date.now();
   const dateStr = new Date(ts).toISOString();
   const type = detectType(body);
+  const bank = detectBank(body, sender);
 
   // 1. TELEBIRR PARSING RULES
-  if (senderLower.includes('telebirr') || senderLower.includes('telebir') || senderLower.includes('8036')) {
+  if (bank === 'telebirr') {
     const balance = extractBalance(body);
     const amount = extractMainAmount(body, balance);
     if (amount <= 0) return null; // not a money movement (e.g. a data bundle notice)
@@ -379,7 +538,7 @@ export function parseSMS(
   }
 
   // 2. CBE PARSING RULES
-  if (senderLower.includes('cbe') || senderLower.includes('cbebirr') || senderLower.includes('cbe_birr') || senderLower === '127') {
+  if (bank === 'cbe' || bank === 'cbe birr') {
     const balance = extractBalance(body);
     const amount = extractMainAmount(body, balance);
     if (amount <= 0) return null;
@@ -406,8 +565,7 @@ export function parseSMS(
     }
 
     const rule = autoCategorize(description, type, mappings, body);
-    const isBirr = senderLower.includes('cbebirr') || senderLower.includes('cbe_birr');
-    return { id: refId, amount, type, date: dateStr, balance, description: rule.name || description, sender: isBirr ? 'cbe birr' : 'cbe', category: rule.category, isReviewed: false, isManual: false, rawMessage: body };
+    return { id: refId, amount, type, date: dateStr, balance, description: rule.name || description, sender: bank, category: rule.category, isReviewed: false, isManual: false, rawMessage: body };
   }
 
   // 3. GENERIC FALLBACK PARSER
