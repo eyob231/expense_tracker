@@ -1,705 +1,1084 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
+  Modal,
+  PermissionsAndroid,
+  Platform,
+  SafeAreaView,
+  ScrollView,
+  StatusBar,
   StyleSheet,
   Text,
-  View,
-  ScrollView,
   TouchableOpacity,
-  SafeAreaView,
-  StatusBar,
-  Alert,
-  Modal,
-  TextInput,
+  View,
   ActivityIndicator,
-  Dimensions,
 } from 'react-native';
-import { useIsFocused } from '@react-navigation/native';
-import { getTransactions, addTransaction, updateTransaction, clearSmsTransactionsAndResetSync, saveCategoryMapping } from '../storage';
-import { Transaction, Category } from '../parser';
-import { theme } from '../theme';
+import Svg, {
+  Circle,
+  Defs,
+  LinearGradient as SvgLinearGradient,
+  Path,
+  Polyline,
+  Stop,
+} from 'react-native-svg';
+import { useIsFocused, useRoute } from '@react-navigation/native';
+import {
+  getTransactions,
+  addTransaction,
+  clearSmsTransactionsAndResetSync,
+} from '../storage';
+import { Transaction } from '../parser';
+import { Theme, CATEGORY_META } from '../theme';
+import { useTheme, useThemedStyles } from '../themeContext';
 import AddTransactionModal from '../components/AddTransactionModal';
+import ReviewQueueModal from '../components/ReviewQueueModal';
 import { syncDeviceSms, subscribeToIncomingSms } from '../deviceSms';
-import { PieChart } from 'react-native-chart-kit';
+import { SkeletonBalanceCard, SkeletonTxCard } from '../components/SkeletonCard';
+import SectionHeader from '../components/SectionHeader';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
-const { width: SCREEN_WIDTH } = Dimensions.get('window');
+// ── Count-up animation hook ────────────────────────────────────────
+function useCountUp(target: number, duration = 900) {
+  const [display, setDisplay] = useState(0);
+  const prev = useRef(0);
+  useEffect(() => {
+    const start = prev.current;
+    const diff = target - start;
+    const startTime = Date.now();
+    const tick = () => {
+      const elapsed = Date.now() - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      setDisplay(start + diff * eased);
+      if (progress < 1) requestAnimationFrame(tick);
+      else prev.current = target;
+    };
+    requestAnimationFrame(tick);
+  }, [target, duration]);
+  return display;
+}
 
-const CATEGORY_EMOJIS: { [key in Category]: string } = {
-  'Food & Dining': '🍔',
-  'Shopping': '🛍️',
-  'Transportation': '🚗',
-  'Salary': '💰',
-  'UPI Transfers': '📲',
-  'Other': '🏷️',
-};
+// ── Mini sparkline (lightweight SVG) ───────────────────────────────
+function Sparkline({
+  values,
+  color = '#fff',
+  width = 88,
+  height = 40,
+}: {
+  values: number[];
+  color?: string;
+  width?: number;
+  height?: number;
+}) {
+  if (values.length < 2) return null;
 
-const CATEGORY_COLORS: { [key in Category]: string } = {
-  'Food & Dining': '#F97316',
-  'Shopping': '#A855F7',
-  'Transportation': '#3B82F6',
-  'Salary': '#10B981',
-  'UPI Transfers': '#6366F1',
-  'Other': '#64748B',
-};
+  const max = Math.max(...values, 1);
+  const stepX = width / (values.length - 1);
+  const points = values.map((v, i) => ({
+    x: i * stepX,
+    y: height - 4 - (v / max) * (height - 12),
+  }));
 
-const CATEGORIES: Category[] = Object.keys(CATEGORY_EMOJIS) as Category[];
+  const line = points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' ');
+  const area =
+    `M ${points[0].x.toFixed(1)},${height} L ` +
+    points.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L ') +
+    ` L ${points[points.length - 1].x.toFixed(1)},${height} Z`;
+  const last = points[points.length - 1];
+
+  return (
+    <Svg width={width} height={height}>
+      <Defs>
+        <SvgLinearGradient id="sparkFill" x1="0" y1="0" x2="0" y2="1">
+          <Stop offset="0" stopColor={color} stopOpacity={0.35} />
+          <Stop offset="1" stopColor={color} stopOpacity={0} />
+        </SvgLinearGradient>
+      </Defs>
+      <Path d={area} fill="url(#sparkFill)" />
+      <Polyline
+        points={line}
+        fill="none"
+        stroke={color}
+        strokeWidth={2}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+      <Circle cx={last.x} cy={last.y} r={2.5} fill={color} />
+    </Svg>
+  );
+}
+
+// ── Main Dashboard ─────────────────────────────────────────────────
+// We only auto-open the labelling sheet once per app launch — nagging on every
+// tab switch would be worse than not asking at all. And even then we ask about
+// just the newest couple of transactions, never the whole backlog.
+let reviewPromptedThisLaunch = false;
+const MAX_LAUNCH_PROMPT = 2;
 
 export default function DashboardScreen() {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const isFocused = useIsFocused();
+  const route = useRoute();
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [loading, setLoading] = useState(true);
   const [isModalVisible, setIsModalVisible] = useState(false);
-  
+  const [showReviewQueue, setShowReviewQueue] = useState(false);
+  // The slice of unreviewed transactions currently being asked about.
+  // Kept as its own state so the sheet never blows up mid-animation when the
+  // underlying transaction list refreshes.
+  const [reviewBatch, setReviewBatch] = useState<Transaction[]>([]);
+
   // Sync state
   const [isSyncing, setIsSyncing] = useState(false);
   const [syncStatus, setSyncStatus] = useState('');
   const [syncProgress, setSyncProgress] = useState(0);
-  
-  // Custom Alert Modals
   const [showSyncOptions, setShowSyncOptions] = useState(false);
-  const [syncResult, setSyncResult] = useState<{title: string; message: string} | null>(null);
+  const [syncResult, setSyncResult] = useState<{ title: string; message: string } | null>(null);
 
-  // Transaction Modal State
-  const [selectedTx, setSelectedTx] = useState<Transaction | null>(null);
-  const [isSelectedTxNew, setIsSelectedTxNew] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<Category>('Other');
-  const [editDescription, setEditDescription] = useState('');
-  const [editType, setEditType] = useState<'credit' | 'debit'>('debit');
-  const [isBalanceHidden, setIsBalanceHidden] = useState(true);
-  const [isCbeHidden, setIsCbeHidden] = useState(true);
-  const [isCbeBirrHidden, setIsCbeBirrHidden] = useState(true);
-  const [isTelebirrHidden, setIsTelebirrHidden] = useState(true);
+  // Balance visibility
+  const [isBalanceHidden, setIsBalanceHidden] = useState(false);
+  const [isCbeHidden, setIsCbeHidden] = useState(false);
+
+  // Whether auto-import is live, so the user knows messages are watched
+  const [smsEnabled, setSmsEnabled] = useState<boolean | null>(null);
+
+  // Tracks whether the first data load has settled (used for the launch prompt)
+  const firstLoadRef = useRef(false);
 
   useEffect(() => {
     if (isFocused) loadData();
   }, [isFocused]);
 
   useEffect(() => {
-    const unsubscribe = subscribeToIncomingSms((tx) => {
-      loadData();
-      setSelectedCategory(tx.category as Category);
-      setEditDescription(tx.description);
-      setEditType(tx.type);
-      setIsSelectedTxNew(true);
-      setSelectedTx(tx);
-    });
+    if (Platform.OS !== 'android') return;
+    PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_SMS)
+      .then(setSmsEnabled)
+      .catch(() => setSmsEnabled(false));
+  }, [isFocused]);
+
+  // Open add modal from FAB (via navigation param)
+  useEffect(() => {
+    const params = route.params as { openAdd?: boolean } | undefined;
+    if (params?.openAdd) {
+      setIsModalVisible(true);
+    }
+  }, [route.params]);
+
+  useEffect(() => {
+    const unsubscribe = subscribeToIncomingSms(() => loadData());
     return () => { if (unsubscribe) unsubscribe(); };
   }, []);
 
   const loadData = async () => {
+    setLoading(true);
     const list = await getTransactions();
     setTransactions(list);
+    setLoading(false);
   };
 
   const runSync = async (isResync: boolean) => {
     setIsSyncing(true);
-    setSyncStatus('Initializing...');
+    setSyncStatus('Initializing…');
     setSyncProgress(0);
-
-    const onProgress = (stage: string, current: number, total: number) => {
-      setSyncStatus(stage);
-      if (total > 0) {
-        setSyncProgress(current / total);
-      }
-    };
-
     if (isResync) {
-      setSyncStatus('Clearing old records...');
+      setSyncStatus('Clearing old records…');
       await clearSmsTransactionsAndResetSync();
     }
-
-    const { imported, total } = await syncDeviceSms(onProgress);
+    const { imported, total } = await syncDeviceSms((stage: any, current: number, tot: number) => {
+      setSyncStatus(typeof stage === 'string' ? stage : 'Reading…');
+      if (tot > 0) setSyncProgress(current / tot);
+    });
     await loadData();
-    
     setSyncStatus('Done!');
     setSyncProgress(1);
-    
-    // Give user a second to see 100%
     setTimeout(() => {
       setIsSyncing(false);
       setSyncStatus('');
       setSyncProgress(0);
-      
-      if (isResync) {
-        setSyncResult({ title: '✅ Re-sync Complete', message: `Re-imported ${imported} of ${total} messages.` });
-      } else {
-        setSyncResult({
-          title: total > 0 ? '✅ Sync Complete' : 'Nothing New',
-          message: total > 0
-            ? `Found ${total} bank messages.\nImported ${imported} new transactions.`
-            : 'No new bank SMS found in the last 30 days.'
-        });
-      }
-    }, 1000);
+      setSyncResult({
+        title: isResync ? '✅ Re-sync Complete' : (total > 0 ? '✅ Sync Complete' : 'Nothing New'),
+        message: total > 0
+          ? `Found ${total} bank messages.\nImported ${imported} new transactions.`
+          : 'No new bank SMS found in the last 30 days.',
+      });
+    }, 900);
   };
 
-  const handleSync = () => {
-    setShowSyncOptions(true);
+  // ── Derived data ─────────────────────────────────────────────────
+  const now = new Date();
+  const thisMonth = now.getMonth();
+  const thisYear = now.getFullYear();
+
+  const thisMonthTx = transactions.filter(t => {
+    const d = new Date(t.date);
+    return d.getMonth() === thisMonth && d.getFullYear() === thisYear;
+  });
+
+  const totalIncome = thisMonthTx.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
+  const totalExpense = thisMonthTx.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
+  const netBalance = totalIncome - totalExpense;
+
+  const unreviewedTx = transactions.filter(t => !t.isReviewed && !t.isManual);
+
+  const openReview = (list: Transaction[]) => {
+    if (list.length === 0) return;
+    setReviewBatch(list);
+    setShowReviewQueue(true);
   };
 
-  const handleAddTransaction = async (newTx: Transaction) => {
-    const updated = await addTransaction(newTx);
-    setTransactions(updated);
-  };
-
-  const saveNewTransactionCategory = async () => {
-    if (!selectedTx) return;
-
-    const finalDesc = editDescription.trim() || selectedTx.description;
-
-    // Save mapping if it was changed
-    if (selectedTx.category !== selectedCategory || selectedTx.description !== finalDesc) {
-      await saveCategoryMapping(selectedTx.description, selectedCategory);
-    }
-    
-    const updatedTx = { ...selectedTx, type: editType, category: selectedCategory, description: finalDesc, isReviewed: true };
-    await updateTransaction(updatedTx);
-    setSelectedTx(null);
+  const closeReview = () => {
+    // Keep `reviewBatch` populated — clearing it here would unmount the sheet
+    // mid-close-animation and leave a blank frame. Just refresh the ledger.
+    setShowReviewQueue(false);
     loadData();
   };
 
-  const totalIncome = transactions.filter(t => t.type === 'credit').reduce((s, t) => s + t.amount, 0);
-  const totalExpense = transactions.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0);
-  const netBalance = totalIncome - totalExpense;
-  const txCount = transactions.length;
+  // On launch, if SMS import produced unreviewed transactions, ask the user to
+  // label them using the existing bottom sheet instead of leaving them to find
+  // the banner themselves. Only the first completed load counts, so a message
+  // arriving later never yanks a sheet up while the user is reading.
+  useEffect(() => {
+    if (loading || firstLoadRef.current) return;
+    firstLoadRef.current = true;
+    if (reviewPromptedThisLaunch || unreviewedTx.length === 0) return;
+    reviewPromptedThisLaunch = true;
+    const timer = setTimeout(() => {
+      openReview(unreviewedTx.slice(0, MAX_LAUNCH_PROMPT));
+    }, 700);
+    return () => clearTimeout(timer);
+  }, [loading, unreviewedTx]);
 
-  // Latest Balances
+  // Account balances (most recent reading per bank)
   const cbeBalance = transactions.find(t => t.sender.toLowerCase() === 'cbe' && t.balance > 0)?.balance;
   const telebirrBalance = transactions.find(t => t.sender.toLowerCase() === 'telebirr' && t.balance > 0)?.balance;
-  const cbeBirrBalance = transactions.find(t => t.sender.toLowerCase().includes('cbe birr') && t.balance > 0)?.balance;
+  const cbeBirrBalance = transactions.find(t => t.sender.toLowerCase() === 'cbe birr' && t.balance > 0)?.balance;
 
-  const categoryTotals: { [key in Category]?: number } = {};
-  transactions.filter(t => t.type === 'debit').forEach(t => {
-    const cat = t.category as Category;
-    categoryTotals[cat] = (categoryTotals[cat] || 0) + t.amount;
+  // Sparkline: last 7 daily totals
+  const sparkValues = Array.from({ length: 7 }, (_, i) => {
+    const d = new Date();
+    d.setDate(d.getDate() - (6 - i));
+    return transactions
+      .filter(t => {
+        const td = new Date(t.date);
+        return td.getDate() === d.getDate() && td.getMonth() === d.getMonth();
+      })
+      .filter(t => t.type === 'debit')
+      .reduce((s, t) => s + t.amount, 0);
   });
-  
-  const sortedCategories = (Object.entries(categoryTotals) as [Category, number][])
-    .filter(([c]) => c !== 'Salary')
-    .sort((a, b) => b[1] - a[1]);
 
-  // Chart data
-  const chartData = sortedCategories.map(([cat, amount]) => ({
-    name: cat,
-    amount: amount,
-    color: CATEGORY_COLORS[cat] || theme.colors.primary,
-    legendFontColor: theme.colors.textMuted,
-    legendFontSize: 11,
-  }));
+  // Recent transactions grouped by day
+  const recentTx = transactions.slice(0, 8);
 
-  const recentTx = transactions.slice(0, 5);
-
-  const maskAmount = (value: number, fractionDigits = 2): string => {
-    if (isBalanceHidden) return '••••••';
-    return value.toLocaleString('en-US', { minimumFractionDigits: fractionDigits });
+  const groupByDay = (txs: Transaction[]) => {
+    const groups: Record<string, Transaction[]> = {};
+    txs.forEach(tx => {
+      const d = new Date(tx.date);
+      const key = d.toDateString();
+      if (!groups[key]) groups[key] = [];
+      groups[key].push(tx);
+    });
+    return Object.entries(groups);
   };
+
+  const dayLabel = (dateStr: string) => {
+    const d = new Date(dateStr);
+    const today = new Date();
+    const yesterday = new Date(); yesterday.setDate(today.getDate() - 1);
+    if (d.toDateString() === today.toDateString()) return 'Today';
+    if (d.toDateString() === yesterday.toDateString()) return 'Yesterday';
+    return d.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+  };
+
+  const grouped = groupByDay(recentTx);
+
+  // Quick stats
+  const dayOfMonth = now.getDate();
+  const avgPerDay = dayOfMonth > 0 ? totalExpense / dayOfMonth : 0;
+  const biggestSpend = thisMonthTx
+    .filter(t => t.type === 'debit')
+    .reduce((max, t) => Math.max(max, t.amount), 0);
+
+  // Count-up animations
+  const animatedSpent = useCountUp(totalExpense);
+  const fmt = (n: number) => n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
   return (
     <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={theme.colors.background} />
+      <StatusBar
+        barStyle={theme.isDark ? 'light-content' : 'dark-content'}
+        backgroundColor={theme.colors.background}
+      />
       <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={styles.scroll}>
 
         {/* ── HEADER ── */}
         <View style={styles.header}>
-          <View>
-            <Text style={styles.headerLabel}>MY WALLET</Text>
-            <Text style={styles.headerTitle}>Financial Hub</Text>
-          </View>
-          <View style={styles.headerActions}>
-            <TouchableOpacity style={styles.iconBtn} onPress={handleSync} disabled={isSyncing}>
-              <Text style={styles.iconBtnText}>🔄</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={styles.addBtn} onPress={() => setIsModalVisible(true)}>
-              <Text style={styles.addBtnText}>＋ Add</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ── BALANCE CARD ── */}
-        <View style={styles.balanceCard}>
-          <View style={styles.balanceCardGlow} />
-          <Text style={styles.balanceCaption}>TOTAL NET BALANCE</Text>
-          <View style={styles.balanceAmountRow}>
-            <Text style={[styles.balanceAmount, !isBalanceHidden && netBalance < 0 && { color: theme.colors.danger }]}>
-              {!isBalanceHidden && (netBalance < 0 ? '-' : '+')}
-              {maskAmount(Math.abs(netBalance))}
-              {!isBalanceHidden && <Text style={styles.balanceCurrency}> ETB</Text>}
+          <View style={styles.headerLeft}>
+            <Text style={styles.greeting}>
+              {now.getHours() < 12 ? 'Good morning ☀️' : now.getHours() < 17 ? 'Good afternoon ☀️' : 'Good evening 🌙'}
             </Text>
-            <TouchableOpacity style={styles.eyeBtn} onPress={() => setIsBalanceHidden(h => !h)}>
-              <Text style={styles.eyeBtnText}>{isBalanceHidden ? '🙈' : '👁️'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <View style={styles.balanceDivider} />
-
-          <View style={styles.balanceRow}>
-            <View style={styles.balanceStat}>
-              <View style={[styles.statDot, { backgroundColor: theme.colors.success }]} />
-              <View>
-                <Text style={styles.statCaption}>INCOME</Text>
-                <Text style={[styles.statAmount, { color: theme.colors.success }]}>
-                  {isBalanceHidden ? '••••••' : `+${totalIncome.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
+            <Text style={styles.headerTitle}>Expense Tracker</Text>
+            {Platform.OS === 'android' && (
+              <View style={styles.statusRow}>
+                <View
+                  style={[
+                    styles.statusDot,
+                    { backgroundColor: smsEnabled === false ? theme.colors.amber : theme.colors.success },
+                  ]}
+                />
+                <Text style={styles.statusText}>
+                  {smsEnabled === false ? 'SMS access off — sync manually' : 'Auto-importing bank SMS'}
                 </Text>
               </View>
-            </View>
-            <View style={styles.statDivider} />
-            <View style={styles.balanceStat}>
-              <View style={[styles.statDot, { backgroundColor: theme.colors.danger }]} />
-              <View>
-                <Text style={styles.statCaption}>EXPENSES</Text>
-                <Text style={[styles.statAmount, { color: theme.colors.danger }]}>
-                  {isBalanceHidden ? '••••••' : `-${totalExpense.toLocaleString('en-US', { minimumFractionDigits: 2 })}`}
-                </Text>
-              </View>
-            </View>
+            )}
           </View>
+          <TouchableOpacity
+            style={styles.syncBtn}
+            onPress={() => setShowSyncOptions(true)}
+            disabled={isSyncing}
+            accessibilityLabel="Sync SMS"
+            accessibilityRole="button"
+          >
+            {isSyncing
+              ? <ActivityIndicator size="small" color={theme.colors.primary} />
+              : <Icon name="refresh" size={20} color={theme.colors.primary} />}
+          </TouchableOpacity>
         </View>
 
-        {/* ── ACCOUNT BALANCES ── */}
-        {(cbeBalance !== undefined || cbeBirrBalance !== undefined || telebirrBalance !== undefined) && (
+        {loading ? (
           <>
-            <Text style={styles.sectionLabel}>ACCOUNT BALANCES</Text>
-            <View style={styles.bankCardsRow}>
-              {cbeBalance !== undefined && (
-                <View style={[styles.bankCard, { borderLeftColor: '#1a6fc4' }]}>
-                  <View style={styles.bankCardIconWrap}>
-                    <Text style={styles.bankCardEmoji}>🏦</Text>
-                  </View>
-                  <View style={styles.bankCardNameRow}>
-                    <Text style={styles.bankCardName}>CBE</Text>
-                    <TouchableOpacity onPress={() => setIsCbeHidden(h => !h)}>
-                      <Text style={styles.bankCardEye}>{isCbeHidden ? '🙈' : '👁️'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.bankCardBalance}>{isCbeHidden ? '••••' : cbeBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
-                  <Text style={styles.bankCardCurrency}>ETB</Text>
-                </View>
-              )}
-              {cbeBirrBalance !== undefined && (
-                <View style={[styles.bankCard, { borderLeftColor: '#059669' }]}>
-                  <View style={styles.bankCardIconWrap}>
-                    <Text style={styles.bankCardEmoji}>🟢</Text>
-                  </View>
-                  <View style={styles.bankCardNameRow}>
-                    <Text style={styles.bankCardName}>CBE Birr</Text>
-                    <TouchableOpacity onPress={() => setIsCbeBirrHidden(h => !h)}>
-                      <Text style={styles.bankCardEye}>{isCbeBirrHidden ? '🙈' : '👁️'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.bankCardBalance}>{isCbeBirrHidden ? '••••' : cbeBirrBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
-                  <Text style={styles.bankCardCurrency}>ETB</Text>
-                </View>
-              )}
-              {telebirrBalance !== undefined && (
-                <View style={[styles.bankCard, { borderLeftColor: '#7c3aed' }]}>
-                  <View style={styles.bankCardIconWrap}>
-                    <Text style={styles.bankCardEmoji}>📱</Text>
-                  </View>
-                  <View style={styles.bankCardNameRow}>
-                    <Text style={styles.bankCardName}>Telebirr</Text>
-                    <TouchableOpacity onPress={() => setIsTelebirrHidden(h => !h)}>
-                      <Text style={styles.bankCardEye}>{isTelebirrHidden ? '🙈' : '👁️'}</Text>
-                    </TouchableOpacity>
-                  </View>
-                  <Text style={styles.bankCardBalance}>{isTelebirrHidden ? '••••' : telebirrBalance.toLocaleString('en-US', { minimumFractionDigits: 2 })}</Text>
-                  <Text style={styles.bankCardCurrency}>ETB</Text>
-                </View>
-              )}
-            </View>
+            <SkeletonBalanceCard />
+            <SkeletonTxCard />
+            <SkeletonTxCard />
+            <SkeletonTxCard />
           </>
-        )}
+        ) : (
+          <>
+            {/* ── SPEND CARD ── */}
+            <View style={styles.balanceCard}>
+              {/* Teal ambient blob */}
+              <View style={styles.balanceGlow} />
 
-        {/* ── SPENDING CHART ── */}
-        {chartData.length > 0 && (
-          <View style={styles.card}>
-            <View style={styles.cardHeader}>
-              <Text style={styles.cardTitle}>Spending by Category</Text>
-              <Text style={styles.cardSub}>{totalExpense.toFixed(0)} ETB total</Text>
+              <View style={styles.balanceTop}>
+                <View style={styles.balanceTopLeft}>
+                  <Text style={styles.balanceCaption}>
+                    SPENT · {now.toLocaleString('default', { month: 'long' }).toUpperCase()}
+                  </Text>
+                  <View style={styles.balanceAmtRow}>
+                    <Text style={styles.balanceSign}>−</Text>
+                    <Text style={styles.balanceCurrency}>Br </Text>
+                    <Text
+                      style={styles.balanceAmount}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                      minimumFontScale={0.6}
+                    >
+                      {isBalanceHidden ? '••••••' : fmt(animatedSpent)}
+                    </Text>
+                    <TouchableOpacity
+                      style={styles.eyeBtn}
+                      onPress={() => setIsBalanceHidden(h => !h)}
+                      accessibilityLabel={isBalanceHidden ? 'Show amounts' : 'Hide amounts'}
+                    >
+                      <Icon
+                        name={isBalanceHidden ? 'eye-off-outline' : 'eye-outline'}
+                        size={18}
+                        color="rgba(255,255,255,0.7)"
+                      />
+                    </TouchableOpacity>
+                  </View>
+                </View>
+                <View style={styles.sparkWrap}>
+                  <Sparkline values={sparkValues} />
+                  <Text style={styles.sparkCaption}>LAST 7 DAYS</Text>
+                </View>
+              </View>
+
+              <View style={styles.balanceDivider} />
+
+              <View style={styles.balanceStats}>
+                <View style={styles.balanceStat}>
+                  <View style={[styles.statDot, { backgroundColor: theme.colors.success }]} />
+                  <View>
+                    <Text style={styles.statCaption}>INCOME</Text>
+                    <Text
+                      style={[styles.statAmt, { color: theme.colors.success }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {isBalanceHidden ? '••••' : `+Br ${fmt(totalIncome)}`}
+                    </Text>
+                  </View>
+                </View>
+                <View style={styles.statDivider} />
+                <View style={styles.balanceStat}>
+                  <View style={[styles.statDot, { backgroundColor: '#fff' }]} />
+                  <View>
+                    <Text style={styles.statCaption}>LEFT OVER</Text>
+                    <Text
+                      style={[styles.statAmt, { color: netBalance < 0 ? theme.colors.danger : '#fff' }]}
+                      numberOfLines={1}
+                      adjustsFontSizeToFit
+                    >
+                      {isBalanceHidden
+                        ? '••••'
+                        : `${netBalance < 0 ? '−' : '+'}Br ${fmt(Math.abs(netBalance))}`}
+                    </Text>
+                  </View>
+                </View>
+              </View>
             </View>
-            <View style={styles.chartContainer}>
-              <PieChart
-                data={chartData}
-                width={SCREEN_WIDTH - 64}
-                height={160}
-                chartConfig={{
-                  backgroundColor: theme.colors.surface,
-                  backgroundGradientFrom: theme.colors.surface,
-                  backgroundGradientTo: theme.colors.surface,
-                  color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-                }}
-                accessor={"amount"}
-                backgroundColor={"transparent"}
-                paddingLeft={"0"}
-                center={[10, 0]}
-                hasLegend={true}
-                absolute
+
+            {/* ── QUICK STATS ── */}
+            <View style={styles.quickStats}>
+              <QuickStat label="AVG / DAY" value={`Br ${fmt(avgPerDay)}`} />
+              <View style={styles.quickStatsDivider} />
+              <QuickStat label="BIGGEST" value={`Br ${fmt(biggestSpend)}`} />
+              <View style={styles.quickStatsDivider} />
+              <QuickStat label="THIS MONTH" value={`${thisMonthTx.length}`} />
+            </View>
+
+            {/* ── REVIEW QUEUE BANNER ── */}
+            {unreviewedTx.length > 0 && (
+              <TouchableOpacity
+                style={styles.reviewBanner}
+                onPress={() => openReview(unreviewedTx)}
+                activeOpacity={0.8}
+                accessibilityLabel={`Review ${unreviewedTx.length} new SMS transactions`}
+              >
+                <View style={styles.reviewBannerIcon}>
+                  <Icon name="message-badge-outline" size={22} color={theme.colors.primary} />
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={styles.reviewBannerTitle}>
+                    {unreviewedTx.length} new SMS transaction{unreviewedTx.length !== 1 ? 's' : ''} to review
+                  </Text>
+                  <Text style={styles.reviewBannerSub}>Label them one by one →</Text>
+                </View>
+                <View style={styles.reviewBannerBadge}>
+                  <Text style={styles.reviewBannerBadgeText}>{unreviewedTx.length}</Text>
+                </View>
+              </TouchableOpacity>
+            )}
+
+            {/* ── ACCOUNT BALANCES ── */}
+            {(cbeBalance !== undefined || cbeBirrBalance !== undefined || telebirrBalance !== undefined) && (
+              <>
+                <View style={styles.sectionHeaderWrap}>
+                  <SectionHeader label="Account balances" sub="Latest reading" />
+                </View>
+                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.bankScroll}>
+                  {cbeBalance !== undefined && (
+                    <BankCard
+                      emoji="🏦"
+                      name="CBE"
+                      balance={cbeBalance}
+                      color={theme.colors.bankCbe}
+                      hidden={isCbeHidden}
+                      onToggle={() => setIsCbeHidden(h => !h)}
+                    />
+                  )}
+                  {cbeBirrBalance !== undefined && (
+                    <BankCard
+                      emoji="🟢"
+                      name="CBE Birr"
+                      balance={cbeBirrBalance}
+                      color={theme.colors.bankCbeBirr}
+                      hidden={isCbeHidden}
+                      onToggle={() => setIsCbeHidden(h => !h)}
+                    />
+                  )}
+                  {telebirrBalance !== undefined && (
+                    <BankCard
+                      emoji="📱"
+                      name="Telebirr"
+                      balance={telebirrBalance}
+                      color={theme.colors.bankTelebirr}
+                      hidden={isCbeHidden}
+                      onToggle={() => setIsCbeHidden(h => !h)}
+                    />
+                  )}
+                </ScrollView>
+              </>
+            )}
+
+            {/* ── RECENT ACTIVITY ── */}
+            <View style={styles.sectionHeaderWrap}>
+              <SectionHeader
+                label="Recent activity"
+                sub={`${transactions.length} total`}
+                large
               />
             </View>
-          </View>
-        )}
 
-        {/* ── QUICK INSIGHT PILLS ── */}
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.pillsRow}>
-          {[
-            { label: 'This Month', value: transactions.filter(t => {
-              const d = new Date(t.date);
-              const now = new Date();
-              return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-            }).length + ' txns' },
-            { label: 'Avg Expense', value: (totalExpense / Math.max(1, transactions.filter(t=>t.type==='debit').length)).toFixed(0) + ' ETB' },
-            { label: 'Top Category', value: sortedCategories[0]?.[0] || 'N/A' },
-          ].map(pill => (
-            <View key={pill.label} style={styles.pill}>
-              <Text style={styles.pillLabel}>{pill.label}</Text>
-              <Text style={styles.pillValue}>{pill.value}</Text>
-            </View>
-          ))}
-        </ScrollView>
-
-        {/* ── RECENT TRANSACTIONS ── */}
-        <View style={styles.card}>
-          <View style={styles.cardHeader}>
-            <Text style={styles.cardTitle}>Recent Activity</Text>
-            <Text style={styles.cardSub}>{recentTx.length} of {txCount}</Text>
-          </View>
-          {recentTx.length === 0 ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyEmoji}>📭</Text>
-              <Text style={styles.emptyText}>No transactions yet.</Text>
-              <Text style={styles.emptyHint}>Tap 🔄 Sync to import bank SMS messages.</Text>
-            </View>
-          ) : (
-            recentTx.map((tx, idx) => {
-              const isDebit = tx.type === 'debit';
-              const icon = CATEGORY_EMOJIS[tx.category as Category] || '🏷️';
-              const catColor = CATEGORY_COLORS[tx.category as Category] || '#64748B';
-              return (
-                <TouchableOpacity 
-                  key={tx.id} 
-                  style={[styles.txRow, idx === recentTx.length - 1 && { borderBottomWidth: 0 }]}
-                  activeOpacity={0.7}
-                  onPress={() => {
-                    setIsSelectedTxNew(false);
-                    setSelectedCategory(tx.category as Category);
-                    setEditDescription(tx.description);
-                    setEditType(tx.type);
-                    setSelectedTx(tx);
-                  }}
+            {recentTx.length === 0 ? (
+              <View style={styles.emptyState}>
+                <View style={styles.emptyIconWrap}>
+                  <Icon name="message-text-clock-outline" size={28} color={theme.colors.primary} />
+                </View>
+                <Text style={styles.emptyTitle}>No transactions yet</Text>
+                <Text style={styles.emptyHint}>
+                  Bank messages are logged automatically as they arrive. Import your recent ones to get started.
+                </Text>
+                <TouchableOpacity
+                  style={styles.emptyBtn}
+                  onPress={() => runSync(false)}
+                  accessibilityLabel="Import bank messages"
+                  accessibilityRole="button"
                 >
-                  <View style={[styles.txIcon, { backgroundColor: catColor + '20' }]}>
-                    <Text style={styles.txEmoji}>{icon}</Text>
-                  </View>
-                  <View style={styles.txMid}>
-                    <Text style={styles.txDesc} numberOfLines={1}>{tx.description}</Text>
-                    <Text style={styles.txMeta}>
-                      {new Date(tx.date).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}
-                      {' · '}{tx.sender.toUpperCase()}
-                    </Text>
-                  </View>
-                  <View style={styles.txRight}>
-                    <Text style={[styles.txAmt, isDebit ? styles.debit : styles.credit]}>
-                      {isDebit ? '-' : '+'}{tx.amount.toFixed(2)}
-                    </Text>
-                    <Text style={styles.txCurrency}>ETB</Text>
-                  </View>
+                  <Icon name="refresh" size={16} color="#fff" />
+                  <Text style={styles.emptyBtnText}>Import bank messages</Text>
                 </TouchableOpacity>
-              );
-            })
-          )}
-        </View>
+              </View>
+            ) : (
+              grouped.map(([dateStr, txs]) => (
+                <View key={dateStr}>
+                  <View style={styles.dayHeaderRow}>
+                    <View style={styles.dayDot} />
+                    <Text style={styles.dayHeader}>{dayLabel(dateStr)}</Text>
+                    <Text style={styles.dayTotal}>
+                      {txs.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0) > 0
+                        ? `-Br ${fmt(txs.filter(t => t.type === 'debit').reduce((s, t) => s + t.amount, 0))}`
+                        : ''}
+                    </Text>
+                  </View>
+                  {txs.map((tx, idx) => (
+                    <TxRow key={tx.id} tx={tx} isLast={idx === txs.length - 1} />
+                  ))}
+                </View>
+              ))
+            )}
+          </>
+        )}
       </ScrollView>
 
-      {/* Sync Progress Overlay Modal */}
+      {/* ── SYNC PROGRESS OVERLAY ── */}
       {isSyncing && (
-        <Modal transparent visible={isSyncing} animationType="fade">
+        <Modal transparent visible animationType="fade">
           <View style={styles.syncOverlay}>
             <View style={styles.syncBox}>
               <ActivityIndicator size="large" color={theme.colors.primary} style={{ marginBottom: 16 }} />
               <Text style={styles.syncTitle}>Syncing SMS</Text>
-              <Text style={styles.syncStatusText}>{syncStatus}</Text>
+              <Text style={styles.syncStatus}>{syncStatus}</Text>
               <View style={styles.syncProgressBg}>
                 <View style={[styles.syncProgressFill, { width: `${Math.max(2, syncProgress * 100)}%` }]} />
               </View>
-              <Text style={styles.syncProgressPct}>{Math.round(syncProgress * 100)}%</Text>
+              <Text style={styles.syncPct}>{Math.round(syncProgress * 100)}%</Text>
             </View>
           </View>
         </Modal>
       )}
 
-      {/* Sync Options Modal */}
+      {/* ── SYNC OPTIONS ── */}
       {showSyncOptions && (
-        <Modal transparent visible={showSyncOptions} animationType="fade">
-          <View style={styles.alertOverlay}>
-            <View style={styles.alertBoxCentered}>
-              <Text style={styles.alertEmoji}>🔄</Text>
-              <Text style={[styles.alertTitle, { marginBottom: 12, textAlign: 'center' }]}>Sync Bank SMS</Text>
-              <Text style={[styles.alertDesc, { textAlign: 'center', marginBottom: 24 }]}>
-                • Sync New — import messages not yet stored.{'\n'}
-                • Re-sync All — clear old records and re-import with full message details.
+        <Modal transparent visible animationType="slide">
+          <View style={styles.sheetOverlay}>
+            <View style={styles.sheet}>
+              <View style={styles.sheetHandle} />
+              <Text style={styles.sheetTitle}>Sync Bank SMS</Text>
+              <Text style={styles.sheetDesc}>
+                {'• Sync New — import messages not yet stored.\n• Re-sync All — clear old records and re-import everything.'}
               </Text>
-              
-              <View style={{ width: '100%', gap: 12 }}>
-                <TouchableOpacity style={styles.saveBtn} onPress={() => { setShowSyncOptions(false); runSync(false); }}>
-                  <Text style={styles.saveBtnText}>Sync New</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveBtn, { backgroundColor: theme.colors.danger }]} onPress={() => { setShowSyncOptions(false); runSync(true); }}>
-                  <Text style={styles.saveBtnText}>Re-sync All</Text>
-                </TouchableOpacity>
-                <TouchableOpacity style={[styles.saveBtn, { backgroundColor: 'transparent', borderWidth: 1, borderColor: theme.colors.border }]} onPress={() => setShowSyncOptions(false)}>
-                  <Text style={[styles.saveBtnText, { color: theme.colors.text }]}>Cancel</Text>
-                </TouchableOpacity>
-              </View>
-            </View>
-          </View>
-        </Modal>
-      )}
-
-      {/* Sync Result Modal */}
-      {syncResult && (
-        <Modal transparent visible={!!syncResult} animationType="fade">
-          <View style={styles.alertOverlay}>
-            <View style={styles.alertBoxCentered}>
-              <Text style={[styles.alertTitle, { marginBottom: 12, textAlign: 'center', fontSize: 20 }]}>{syncResult.title}</Text>
-              <Text style={[styles.alertDesc, { textAlign: 'center', marginBottom: 24 }]}>{syncResult.message}</Text>
-              <TouchableOpacity style={[styles.saveBtn, { width: '100%' }]} onPress={() => setSyncResult(null)}>
-                <Text style={styles.saveBtnText}>OK</Text>
+              <TouchableOpacity
+                style={styles.sheetPrimary}
+                onPress={() => { setShowSyncOptions(false); runSync(false); }}
+              >
+                <Icon name="refresh" size={18} color="#fff" />
+                <Text style={styles.sheetPrimaryText}>Sync New</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={styles.sheetDanger}
+                onPress={() => { setShowSyncOptions(false); runSync(true); }}
+              >
+                <Icon name="database-refresh-outline" size={18} color={theme.colors.danger} />
+                <Text style={styles.sheetDangerText}>Re-sync All</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.sheetCancel} onPress={() => setShowSyncOptions(false)}>
+                <Text style={styles.sheetCancelText}>Cancel</Text>
               </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
 
-      {/* Transaction Details Modal */}
-      {selectedTx && (
-        <Modal transparent visible={!!selectedTx} animationType="slide">
-          <View style={styles.alertOverlay}>
-            <View style={styles.alertBoxBottom}>
-              <View style={[styles.alertHeader, editType === 'debit' ? styles.alertHeaderDanger : styles.alertHeaderSuccess]}>
-                <Text style={styles.alertEmoji}>{editType === 'debit' ? '📉' : '📈'}</Text>
-                <Text style={styles.alertTitle}>{isSelectedTxNew ? 'New Transaction Detected' : 'Transaction Details'}</Text>
-              </View>
-              
-              <View style={styles.alertContent}>
-                <Text style={[styles.alertAmount, { color: editType === 'debit' ? theme.colors.danger : theme.colors.success }]}>
-                  {editType === 'debit' ? '-' : '+'}{selectedTx.amount.toFixed(2)} <Text style={{fontSize: 16}}>ETB</Text>
-                </Text>
-
-                {/* ── TYPE TOGGLE ── */}
-                <Text style={styles.catPickerLabel}>Transaction Type:</Text>
-                <View style={styles.typeToggleRow}>
-                  <TouchableOpacity
-                    style={[styles.typeToggleBtn, editType === 'credit' && styles.typeToggleBtnActiveIncome]}
-                    onPress={() => setEditType('credit')}
-                  >
-                    <Text style={styles.typeToggleIcon}>📈</Text>
-                    <Text style={[styles.typeToggleText, editType === 'credit' && { color: theme.colors.success }]}>Income</Text>
-                  </TouchableOpacity>
-                  <TouchableOpacity
-                    style={[styles.typeToggleBtn, editType === 'debit' && styles.typeToggleBtnActiveExpense]}
-                    onPress={() => setEditType('debit')}
-                  >
-                    <Text style={styles.typeToggleIcon}>📉</Text>
-                    <Text style={[styles.typeToggleText, editType === 'debit' && { color: theme.colors.danger }]}>Expense</Text>
-                  </TouchableOpacity>
-                </View>
-
-                <Text style={styles.catPickerLabel}>Name / Description:</Text>
-                <TextInput
-                  style={styles.descInput}
-                  value={editDescription}
-                  onChangeText={setEditDescription}
-                  placeholder="e.g. Salary, Uber, Eyob"
-                  placeholderTextColor={theme.colors.textMuted}
-                />
-                {selectedTx.rawMessage ? (
-                  <Text style={styles.alertRaw}>{selectedTx.rawMessage}</Text>
-                ) : null}
-
-                <Text style={styles.catPickerLabel}>Categorize as:</Text>
-                <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.catPicker}>
-                  {CATEGORIES.map(cat => {
-                    const isSelected = selectedCategory === cat;
-                    return (
-                      <TouchableOpacity
-                        key={cat}
-                        style={[styles.catPill, isSelected && { borderColor: CATEGORY_COLORS[cat], backgroundColor: CATEGORY_COLORS[cat] + '20' }]}
-                        onPress={() => setSelectedCategory(cat)}
-                      >
-                        <Text style={styles.catPillEmoji}>{CATEGORY_EMOJIS[cat]}</Text>
-                        <Text style={[styles.catPillText, isSelected && { color: CATEGORY_COLORS[cat] }]}>{cat}</Text>
-                      </TouchableOpacity>
-                    );
-                  })}
-                </ScrollView>
-
-                <TouchableOpacity style={styles.saveBtn} onPress={saveNewTransactionCategory}>
-                  <Text style={styles.saveBtnText}>Save & Close</Text>
-                </TouchableOpacity>
-                {!isSelectedTxNew && (
-                  <TouchableOpacity style={[styles.saveBtn, { backgroundColor: 'transparent', marginTop: 8 }]} onPress={() => setSelectedTx(null)}>
-                    <Text style={[styles.saveBtnText, { color: theme.colors.textMuted }]}>Cancel</Text>
-                  </TouchableOpacity>
-                )}
-              </View>
+      {/* ── SYNC RESULT ── */}
+      {syncResult && (
+        <Modal transparent visible animationType="fade">
+          <View style={styles.syncOverlay}>
+            <View style={styles.syncBox}>
+              <Text style={styles.syncResultTitle}>{syncResult.title}</Text>
+              <Text style={styles.syncStatus}>{syncResult.message}</Text>
+              <TouchableOpacity
+                style={styles.sheetPrimary}
+                onPress={() => setSyncResult(null)}
+              >
+                <Text style={styles.sheetPrimaryText}>OK</Text>
+              </TouchableOpacity>
             </View>
           </View>
         </Modal>
       )}
 
+      {/* ── ADD TRANSACTION ── */}
       <AddTransactionModal
         visible={isModalVisible}
         onClose={() => setIsModalVisible(false)}
-        onAdd={handleAddTransaction}
+        onAdd={async (tx) => { await addTransaction(tx); loadData(); }}
+      />
+
+      {/* ── REVIEW QUEUE ── */}
+      <ReviewQueueModal
+        visible={showReviewQueue}
+        queue={reviewBatch}
+        remaining={Math.max(0, unreviewedTx.length - reviewBatch.length)}
+        onClose={closeReview}
+        onDone={closeReview}
       />
     </SafeAreaView>
   );
 }
 
-const styles = StyleSheet.create({
-  safe: { flex: 1, backgroundColor: theme.colors.background },
-  scroll: { paddingHorizontal: 16, paddingBottom: 32 },
+// ── Sub-components ─────────────────────────────────────────────────
 
-  // Header
-  header: { paddingTop: theme.statusBarHeight + 12, marginBottom: 20, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
-  headerLabel: { color: theme.colors.primary, fontSize: 10, fontWeight: '800', letterSpacing: 2 },
-  headerTitle: { color: theme.colors.text, fontSize: 22, fontWeight: '800', marginTop: 2 },
-  headerActions: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  iconBtn: { width: 38, height: 38, borderRadius: 19, backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, justifyContent: 'center', alignItems: 'center' },
-  iconBtnText: { fontSize: 16 },
-  addBtn: { backgroundColor: theme.colors.primary, paddingHorizontal: 16, paddingVertical: 9, borderRadius: 20 },
-  addBtnText: { color: '#fff', fontWeight: '800', fontSize: 13 },
+function QuickStat({ label, value }: { label: string; value: string }) {
+  const quickStatStyles = useThemedStyles(createQuickStatStyles);
+  return (
+    <View style={quickStatStyles.item}>
+      <Text style={quickStatStyles.label}>{label}</Text>
+      <Text style={quickStatStyles.value} numberOfLines={1} adjustsFontSizeToFit>
+        {value}
+      </Text>
+    </View>
+  );
+}
 
-  // Balance card
-  balanceCard: { backgroundColor: theme.colors.surface, borderRadius: 24, padding: 24, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border, overflow: 'hidden', position: 'relative' },
-  balanceCardGlow: { position: 'absolute', top: -60, right: -60, width: 180, height: 180, borderRadius: 90, backgroundColor: 'rgba(99,102,241,0.08)' },
-  balanceCaption: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 2 },
-  balanceAmountRow: { flexDirection: 'row', alignItems: 'center', gap: 12, marginTop: 6, marginBottom: 4 },
-  balanceAmount: { color: theme.colors.text, fontSize: 38, fontWeight: '800' },
-  eyeBtn: { padding: 6 },
-  eyeBtnText: { fontSize: 22 },
-  balanceCurrency: { fontSize: 18, color: theme.colors.textMuted },
-  balanceDivider: { height: 1, backgroundColor: theme.colors.border, width: '100%', marginVertical: 20 },
-  balanceRow: { flexDirection: 'row', alignItems: 'center' },
-  balanceStat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  statDot: { width: 8, height: 8, borderRadius: 4 },
-  statCaption: { color: theme.colors.textMuted, fontSize: 9, fontWeight: '700', letterSpacing: 1 },
-  statAmount: { fontSize: 14, fontWeight: '800', marginTop: 2 },
-  statDivider: { width: 1, height: 32, backgroundColor: theme.colors.border, marginHorizontal: 4 },
-
-  // Account Balances section
-  sectionLabel: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '800', letterSpacing: 2, marginBottom: 10 },
-  bankCardsRow: { flexDirection: 'row', gap: 10, marginBottom: 16 },
-  bankCard: {
-    flex: 1,
-    backgroundColor: theme.colors.surface,
-    borderRadius: 16,
-    padding: 14,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderLeftWidth: 3,
+const createQuickStatStyles = (theme: Theme) => StyleSheet.create({
+  item: { flex: 1, alignItems: 'center' },
+  label: {
+    ...theme.typography.overline,
+    fontSize: 9,
+    color: theme.colors.textMuted,
+    marginBottom: 4,
   },
-  bankCardIconWrap: {
-    width: 36,
-    height: 36,
-    borderRadius: 10,
-    backgroundColor: theme.colors.background,
-    alignItems: 'center',
+  value: { ...theme.typography.title, color: theme.colors.textSecondary },
+});
+
+function BankCard({
+  emoji, name, balance, color, hidden, onToggle,
+}: {
+  emoji: string; name: string; balance: number;
+  color: string; hidden: boolean; onToggle: () => void;
+}) {
+  const { theme } = useTheme();
+  const bankStyles = useThemedStyles(createBankStyles);
+  return (
+    <View style={[bankStyles.card, theme.shadow.sm]}>
+      <View style={[bankStyles.iconWrap, { backgroundColor: color + '20' }]}>
+        <Text style={{ fontSize: 20 }}>{emoji}</Text>
+      </View>
+      <View style={bankStyles.nameRow}>
+        <Text style={bankStyles.name}>{name}</Text>
+        <TouchableOpacity onPress={onToggle} accessibilityLabel={`Toggle ${name} balance visibility`}>
+          <Icon name={hidden ? 'eye-off-outline' : 'eye-outline'} size={14} color={theme.colors.textMuted} />
+        </TouchableOpacity>
+      </View>
+      <Text style={[bankStyles.balance, { color }]}>
+        {hidden ? '••••' : balance.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+      </Text>
+      <Text style={bankStyles.currency}>ETB</Text>
+    </View>
+  );
+}
+
+const createBankStyles = (theme: Theme) => StyleSheet.create({
+  card: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.lg,
+    padding: 16,
+    width: 120,
+    marginRight: 10,
+  },
+  iconWrap: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
     justifyContent: 'center',
+    alignItems: 'center',
     marginBottom: 10,
   },
-  bankCardEmoji: { fontSize: 18 },
-  bankCardName: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 0.5, marginBottom: 4 },
-  bankCardNameRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 },
-  bankCardEye: { fontSize: 12 },
-  bankCardBalance: { color: theme.colors.text, fontSize: 16, fontWeight: '900' },
-  bankCardCurrency: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '600', marginTop: 2 },
+  nameRow: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 },
+  name: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '700', letterSpacing: 0.5 },
+  balance: { fontSize: 17, fontWeight: '900' },
+  currency: { color: theme.colors.textMuted, fontSize: 9, fontWeight: '600', marginTop: 2 },
+});
 
-  chartContainer: { alignItems: 'center', justifyContent: 'center', marginVertical: 8 },
-  pillsRow: { marginBottom: 16 },
-  pill: { backgroundColor: theme.colors.surface, borderWidth: 1, borderColor: theme.colors.border, borderRadius: 16, paddingHorizontal: 16, paddingVertical: 10, marginRight: 10 },
-  pillLabel: { color: theme.colors.textMuted, fontSize: 10, fontWeight: '600', letterSpacing: 0.5 },
-  pillValue: { color: theme.colors.text, fontSize: 14, fontWeight: '800', marginTop: 2 },
-  card: { backgroundColor: theme.colors.surface, borderRadius: 20, padding: 16, marginBottom: 16, borderWidth: 1, borderColor: theme.colors.border },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 16 },
-  cardTitle: { color: theme.colors.text, fontSize: 16, fontWeight: '800' },
-  cardSub: { color: theme.colors.textMuted, fontSize: 12 },
-  txRow: { flexDirection: 'row', alignItems: 'center', paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: theme.colors.border },
-  txIcon: { width: 44, height: 44, borderRadius: 14, justifyContent: 'center', alignItems: 'center', marginRight: 12 },
-  txEmoji: { fontSize: 22 },
-  txMid: { flex: 1 },
-  txDesc: { color: theme.colors.text, fontSize: 14, fontWeight: '600' },
-  txMeta: { color: theme.colors.textMuted, fontSize: 11, marginTop: 3 },
-  txRight: { alignItems: 'flex-end' },
-  txAmt: { fontSize: 16, fontWeight: '800' },
-  txCurrency: { color: theme.colors.textMuted, fontSize: 10, marginTop: 2 },
-  debit: { color: theme.colors.danger },
-  credit: { color: theme.colors.success },
-  emptyState: { paddingVertical: 32, alignItems: 'center' },
-  emptyEmoji: { fontSize: 40, marginBottom: 12 },
-  emptyText: { color: theme.colors.text, fontSize: 16, fontWeight: '700' },
-  emptyHint: { color: theme.colors.textMuted, fontSize: 13, marginTop: 6, textAlign: 'center' },
+function TxRow({ tx, isLast }: { tx: Transaction; isLast: boolean }) {
+  const { theme } = useTheme();
+  const txStyles = useThemedStyles(createTxStyles);
+  const meta = CATEGORY_META[tx.category] ?? { emoji: '🏷️', color: theme.colors.textMuted };
+  const isDebit = tx.type === 'debit';
+  return (
+    <View style={[txStyles.row, !isLast && txStyles.rowBorder]}>
+      <View style={[txStyles.icon, { backgroundColor: meta.color + '20' }]}>
+        <Text style={{ fontSize: 20 }}>{meta.emoji}</Text>
+      </View>
+      <View style={txStyles.mid}>
+        <Text style={txStyles.desc} numberOfLines={1}>{tx.description}</Text>
+        <View style={txStyles.metaRow}>
+          <Text style={txStyles.metaText}>
+            {new Date(tx.date).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
+          </Text>
+          <View style={[txStyles.catChip, { backgroundColor: meta.color + '18' }]}>
+            <Text style={[txStyles.catChipText, { color: meta.color }]}>{tx.category}</Text>
+          </View>
+          {!tx.isReviewed && !tx.isManual && (
+            <View style={txStyles.newBadge}>
+              <Text style={txStyles.newBadgeText}>NEW</Text>
+            </View>
+          )}
+        </View>
+      </View>
+      <View style={txStyles.right}>
+        <Text style={[txStyles.amt, isDebit ? txStyles.debit : txStyles.credit]}>
+          {isDebit ? '-' : '+'}Br {tx.amount.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+        </Text>
+        {tx.sender && (
+          <Text style={txStyles.sender}>{tx.sender.toUpperCase()}</Text>
+        )}
+      </View>
+    </View>
+  );
+}
 
-  // Overlays
-  syncOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.8)', justifyContent: 'center', alignItems: 'center', padding: 24 },
-  syncBox: { backgroundColor: theme.colors.surface, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border, padding: 32, width: '100%', alignItems: 'center' },
-  syncTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '800', marginBottom: 8 },
-  syncStatusText: { color: theme.colors.textMuted, fontSize: 13, marginBottom: 20, textAlign: 'center' },
-  syncProgressBg: { width: '100%', height: 6, backgroundColor: theme.colors.border, borderRadius: 3, overflow: 'hidden', marginBottom: 8 },
-  syncProgressFill: { height: '100%', backgroundColor: theme.colors.primary, borderRadius: 3 },
-  syncProgressPct: { color: theme.colors.textMuted, fontSize: 12, fontWeight: '700' },
-
-  // Custom Alert Modal
-  alertOverlay: { flex: 1, backgroundColor: 'rgba(0, 0, 0, 0.7)', justifyContent: 'center' },
-  alertBoxCentered: { backgroundColor: theme.colors.surfaceSecondary, borderRadius: 24, padding: 32, margin: 24, alignItems: 'center', borderWidth: 1, borderColor: theme.colors.border },
-  alertBoxBottom: { backgroundColor: theme.colors.surfaceSecondary, borderTopLeftRadius: 24, borderTopRightRadius: 24, overflow: 'hidden', marginTop: 'auto' },
-  alertHeader: { flexDirection: 'row', alignItems: 'center', padding: 20, gap: 10 },
-  alertHeaderDanger: { backgroundColor: theme.colors.danger + '20' },
-  alertHeaderSuccess: { backgroundColor: theme.colors.success + '20' },
-  alertEmoji: { fontSize: 24 },
-  alertTitle: { color: theme.colors.text, fontSize: 16, fontWeight: '800' },
-  alertContent: { padding: 24 },
-  alertAmount: { color: theme.colors.text, fontSize: 32, fontWeight: '900', marginBottom: 4 },
-  alertDesc: { color: theme.colors.textMuted, fontSize: 14, marginBottom: 16, lineHeight: 20 },
-  descInput: {
-    backgroundColor: theme.colors.surface,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    borderRadius: 12,
-    paddingHorizontal: 14,
-    paddingVertical: 10,
-    color: theme.colors.text,
-    fontSize: 14,
-    marginBottom: 16,
-  },
-  alertRaw: { color: theme.colors.textMuted, fontSize: 12, fontStyle: 'italic', marginBottom: 24, lineHeight: 18 },
-  catPickerLabel: { color: theme.colors.text, fontSize: 14, fontWeight: '700', marginBottom: 12 },
-  catPicker: { flexDirection: 'row', marginBottom: 24 },
-  catPill: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingVertical: 10, borderRadius: 20, borderWidth: 1, borderColor: theme.colors.border, marginRight: 10, gap: 6 },
-  catPillEmoji: { fontSize: 16 },
-  catPillText: { color: theme.colors.text, fontSize: 13, fontWeight: '700' },
-  saveBtn: { backgroundColor: theme.colors.primary, padding: 16, borderRadius: 12, alignItems: 'center' },
-  saveBtnText: { color: '#fff', fontSize: 16, fontWeight: '800' },
-
-  // Type toggle
-  typeToggleRow: { flexDirection: 'row', gap: 10, marginBottom: 20 },
-  typeToggleBtn: {
-    flex: 1,
+const createTxStyles = (theme: Theme) => StyleSheet.create({
+  row: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
-    gap: 6,
     paddingVertical: 12,
-    borderRadius: 12,
-    borderWidth: 1.5,
-    borderColor: theme.colors.border,
+    paddingHorizontal: 16,
     backgroundColor: theme.colors.surface,
+    marginBottom: 2,
+    borderRadius: theme.borderRadius.md,
   },
-  typeToggleBtnActiveIncome: {
-    borderColor: theme.colors.success,
-    backgroundColor: theme.colors.success + '18',
+  rowBorder: { marginBottom: 2 },
+  icon: {
+    width: 44,
+    height: 44,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
   },
-  typeToggleBtnActiveExpense: {
+  mid: { flex: 1 },
+  desc: { color: theme.colors.text, fontSize: 14, fontWeight: '600', marginBottom: 4 },
+  metaRow: { flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' },
+  metaText: { color: theme.colors.textMuted, fontSize: 11 },
+  catChip: {
+    paddingHorizontal: 7,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  catChipText: { fontSize: 10, fontWeight: '700' },
+  newBadge: {
+    backgroundColor: theme.colors.amberSubtle,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  newBadgeText: { color: theme.colors.amber, fontSize: 9, fontWeight: '800' },
+  right: { alignItems: 'flex-end' },
+  amt: { fontSize: 14, fontWeight: '800' },
+  debit: { color: theme.colors.danger },
+  credit: { color: theme.colors.success },
+  sender: { color: theme.colors.textMuted, fontSize: 10, marginTop: 2 },
+});
+
+// ── Styles ──────────────────────────────────────────────────────────
+const createStyles = (theme: Theme) => StyleSheet.create({
+  safe: { flex: 1, backgroundColor: theme.colors.background },
+  scroll: { paddingBottom: 100 },
+
+  // Header
+  header: {
+    paddingTop: theme.statusBarHeight + 12,
+    paddingHorizontal: 20,
+    marginBottom: 20,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  headerLeft: { flex: 1, paddingRight: 12 },
+  greeting: { color: theme.colors.textMuted, fontSize: 13, fontWeight: '600' },
+  headerTitle: { color: theme.colors.text, fontSize: 24, fontWeight: '800', marginTop: 2 },
+  statusRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 6 },
+  statusDot: { width: 6, height: 6, borderRadius: 3 },
+  statusText: { color: theme.colors.textMuted, fontSize: 11, fontWeight: '600' },
+  syncBtn: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: theme.colors.surface,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...theme.shadow.sm,
+  },
+
+  // Balance card
+  balanceCard: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    borderRadius: theme.borderRadius.xl,
+    backgroundColor: theme.colors.primaryDeep,
+    padding: 24,
+    overflow: 'hidden',
+    position: 'relative',
+    ...theme.shadow.accent,
+  },
+  balanceGlow: {
+    position: 'absolute',
+    top: -40,
+    right: -40,
+    width: 160,
+    height: 160,
+    borderRadius: 80,
+    backgroundColor: 'rgba(255,255,255,0.12)',
+  },
+  balanceTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: 18,
+    gap: 12,
+  },
+  balanceTopLeft: { flex: 1, minWidth: 0 },
+  balanceSign: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 26,
+    fontWeight: '800',
+    marginRight: -4,
+  },
+  sparkWrap: { alignItems: 'center', gap: 4, flexShrink: 0 },
+  sparkCaption: {
+    color: 'rgba(255,255,255,0.55)',
+    fontSize: 8,
+    fontWeight: '800',
+    letterSpacing: 1,
+  },
+  balanceCaption: {
+    color: 'rgba(255,255,255,0.78)',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1.5,
+    marginBottom: 6,
+  },
+  balanceAmtRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 4,
+    flexShrink: 1,
+  },
+  balanceCurrency: {
+    color: 'rgba(255,255,255,0.60)',
+    fontSize: 16,
+    fontWeight: '600',
+    letterSpacing: 0.5,
+  },
+  balanceAmount: {
+    color: '#fff',
+    fontSize: 38,
+    fontWeight: '900',
+    letterSpacing: -1.4,
+    flexShrink: 1,
+  },
+  eyeBtn: { padding: 8, marginLeft: 4 },
+  balanceDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255,255,255,0.2)',
+    marginBottom: 16,
+  },
+  balanceStats: { flexDirection: 'row', alignItems: 'center' },
+  balanceStat: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8, minWidth: 0 },
+  statDot: { width: 8, height: 8, borderRadius: 4 },
+  statCaption: { color: 'rgba(255,255,255,0.78)', fontSize: 9, fontWeight: '800', letterSpacing: 1 },
+  statAmt: { fontSize: 14, fontWeight: '800', marginTop: 2 },
+  statDivider: { width: 1, height: 32, backgroundColor: 'rgba(255,255,255,0.2)', marginHorizontal: 8 },
+
+  // Review banner
+  // Quick stats
+  quickStats: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginHorizontal: 16,
+    marginBottom: 16,
+    paddingVertical: 14,
+    paddingHorizontal: 8,
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.lg,
+    ...theme.shadow.sm,
+  },
+  quickStatsDivider: {
+    width: 1,
+    height: 26,
+    backgroundColor: theme.colors.border,
+  },
+
+  reviewBanner: {
+    marginHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: theme.colors.primarySubtle,
+    borderRadius: theme.borderRadius.lg,
+    borderWidth: 1,
+    borderColor: theme.colors.primary,
+    padding: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+  reviewBannerIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: theme.colors.primaryGlow,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewBannerTitle: { color: theme.colors.text, fontSize: 14, fontWeight: '700' },
+  reviewBannerSub: { color: theme.colors.primary, fontSize: 12, marginTop: 2 },
+  reviewBannerBadge: {
+    backgroundColor: theme.colors.primaryDeep,
+    width: 28,
+    height: 28,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  reviewBannerBadgeText: { color: theme.colors.onPrimary, fontSize: 13, fontWeight: '800' },
+
+  // Section headers
+  sectionHeaderWrap: { marginHorizontal: 16, marginBottom: 10, marginTop: 4 },
+
+  // Account balances
+  bankScroll: { paddingLeft: 16, marginBottom: 20 },
+
+  // Day groups
+  dayHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    paddingHorizontal: 20,
+    marginTop: 8,
+    marginBottom: 6,
+  },
+  dayDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: theme.colors.primary },
+  dayHeader: { color: theme.colors.textSecondary, fontSize: 12, fontWeight: '700', flex: 1 },
+  dayTotal: { color: theme.colors.danger, fontSize: 11, fontWeight: '700' },
+
+  // Empty
+  emptyState: { alignItems: 'center', paddingVertical: 40, paddingHorizontal: 32 },
+  emptyIconWrap: {
+    width: 64,
+    height: 64,
+    borderRadius: 32,
+    backgroundColor: theme.colors.primarySubtle,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+  emptyTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '800', marginBottom: 6 },
+  emptyHint: { color: theme.colors.textMuted, fontSize: 13, textAlign: 'center', lineHeight: 20 },
+  emptyBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: theme.colors.primaryDeep,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: 20,
+    paddingVertical: 12,
+    marginTop: 18,
+    ...theme.shadow.accent,
+  },
+  emptyBtnText: { color: theme.colors.onPrimary, fontSize: 14, fontWeight: '800' },
+
+  // Sync overlays
+  syncOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 24,
+  },
+  syncBox: {
+    backgroundColor: theme.colors.surface,
+    borderRadius: theme.borderRadius.xl,
+    padding: 32,
+    width: '100%',
+    alignItems: 'center',
+    ...theme.shadow.md,
+  },
+  syncTitle: { color: theme.colors.text, fontSize: 18, fontWeight: '800', marginBottom: 8 },
+  syncResultTitle: { color: theme.colors.text, fontSize: 22, fontWeight: '800', marginBottom: 8 },
+  syncStatus: { color: theme.colors.textMuted, fontSize: 13, marginBottom: 20, textAlign: 'center', lineHeight: 20 },
+  syncProgressBg: {
+    width: '100%',
+    height: 6,
+    backgroundColor: theme.colors.surfaceElevated,
+    borderRadius: 3,
+    overflow: 'hidden',
+    marginBottom: 8,
+  },
+  syncProgressFill: { height: '100%', backgroundColor: theme.colors.primary, borderRadius: 3 },
+  syncPct: { color: theme.colors.textMuted, fontSize: 12, fontWeight: '700' },
+
+  // Bottom sheets
+  sheetOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.6)',
+    justifyContent: 'flex-end',
+  },
+  sheet: {
+    backgroundColor: theme.colors.surfaceSecondary,
+    borderTopLeftRadius: theme.borderRadius.xl,
+    borderTopRightRadius: theme.borderRadius.xl,
+    padding: 24,
+    paddingBottom: 40,
+  },
+  sheetHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: theme.colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 20,
+  },
+  sheetTitle: { color: theme.colors.text, fontSize: 20, fontWeight: '800', marginBottom: 10 },
+  sheetDesc: { color: theme.colors.textMuted, fontSize: 13, lineHeight: 20, marginBottom: 20 },
+  sheetPrimary: {
+    backgroundColor: theme.colors.primary,
+    borderRadius: theme.borderRadius.md,
+    padding: 16,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  sheetPrimaryText: { color: '#fff', fontSize: 16, fontWeight: '800' },
+  sheetDanger: {
+    borderRadius: theme.borderRadius.md,
+    padding: 16,
+    alignItems: 'center',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginBottom: 10,
+    borderWidth: 1.5,
     borderColor: theme.colors.danger,
-    backgroundColor: theme.colors.danger + '18',
+    backgroundColor: theme.colors.dangerSubtle,
   },
-  typeToggleIcon: { fontSize: 18 },
-  typeToggleText: { color: theme.colors.textMuted, fontSize: 14, fontWeight: '700' },
+  sheetDangerText: { color: theme.colors.danger, fontSize: 16, fontWeight: '700' },
+  sheetCancel: {
+    padding: 16,
+    alignItems: 'center',
+  },
+  sheetCancelText: { color: theme.colors.textMuted, fontSize: 15, fontWeight: '600' },
 });

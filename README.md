@@ -6,13 +6,18 @@ A **React Native** Android app that automatically tracks your income and expense
 
 ## ✨ Features
 
-- 📩 **Automatic SMS Parsing** — Reads bank SMS notifications from CBE Birr, Telebirr, and other Ethiopian banks in both English and Amharic
-- 📊 **Dashboard** — Visual summary of income vs. expenses with charts and balance overview
+- 📩 **Automatic SMS Parsing** — Reads bank SMS notifications from CBE Birr, Telebirr, and other Ethiopian banks in both English and Amharic. Numbers followed by a data/time unit (`1024 MB`, `2 GB`, `100 minutes`) are never mistaken for money, and amounts spelled out as words (`one hundred fifty Birr`) are understood
+- 🔄 **No manual syncing** — New bank messages are imported the moment they arrive. Messages received while the app was closed are queued natively and imported on next launch / foreground, so the inbox sync is just a safety net.
+- 📊 **Dashboard** — Spend-first summary with a 7-day trend, income and left-over, plus per-account balances
 - 🗂️ **Transaction History** — Full list of all detected transactions with filtering and search
 - 🏷️ **Auto-Categorization** — Automatically classifies transactions (Food & Dining, Transportation, Shopping, Salary, UPI Transfers, etc.)
-- 🔁 **SMS Simulator** — Test SMS parsing without a real bank message
+- ⭐ **Frequent Accounts** — Detects the accounts, phone numbers and payees you transact with most; one tap turns one into a rule that re-categorizes past and future transactions
+- 🧩 **Smart Rules** — Rules match against the full SMS body *and* the parsed description, so rules for phone numbers and account numbers actually apply
+- ✅ **Label sheet** — When the app opens and SMS import produced new transactions, a bottom sheet (75% of the screen, dashboard still visible behind it) asks about just the newest two so nothing sits uncategorized. The rest wait in the Ledger banner. Fixing one learns a rule for that account
+- 🔁 **SMS Simulator** — Test SMS parsing (with your rules applied) without a real bank message
 - 💾 **Local Storage** — All data stored securely on-device using AsyncStorage (no cloud, no account needed)
-- 🎨 **Modern UI** — Clean dark-themed interface with charts powered by `react-native-chart-kit`
+- 🎨 **Themes** — Light / Dark / Auto with six accent colours, persisted on device. Accents ship as three tokens each (bright for icons, deep for fills, soft for highlights) so white-on-accent text always clears WCAG AA
+- 📊 **Charts** — Category, merchant and month-over-month visuals powered by `react-native-chart-kit` + `react-native-svg`
 
 ---
 
@@ -95,14 +100,20 @@ android/app/build/outputs/apk/release/app-release.apk
 expense_tracker/
 ├── src/
 │   ├── screens/
-│   │   ├── DashboardScreen.tsx      # Home screen with charts & summary
+│   │   ├── DashboardScreen.tsx      # Home screen with spend summary & trend
 │   │   ├── TransactionsScreen.tsx   # Full transaction list & filters
-│   │   └── SimulatorScreen.tsx      # SMS simulator for testing
+│   │   ├── InsightsScreen.tsx       # Category & month-over-month analytics
+│   │   └── SimulatorScreen.tsx      # Settings: rules, frequent accounts, SMS simulator
+│   ├── components/
+│   │   ├── AddTransactionModal.tsx  # Manual entry (amount keypad → details)
+│   │   ├── ReviewQueueModal.tsx     # Bottom sheet: one-tap confirm / fix for new SMS transactions
+│   │   └── AmountKeypad.tsx         # Custom numeric keypad
 │   ├── parser/
-│   │   └── index.ts                 # SMS parsing & auto-categorization logic
-│   ├── deviceSms.ts                 # Native SMS reading bridge
+│   │   └── index.ts                 # SMS parsing, rule engine & frequent-account detection
+│   ├── deviceSms.ts                 # Native SMS reading bridge, live listener & queue drain
 │   ├── storage.ts                   # AsyncStorage CRUD operations
-│   └── theme.ts                     # App color palette & design tokens
+│   ├── theme.ts                     # Palettes, accents & design tokens (buildTheme)
+│   └── themeContext.tsx             # ThemeProvider, useTheme, useThemedStyles (persisted)
 ├── android/
 │   └── app/src/main/java/.../
 │       ├── SmsModule.kt             # Native module: reads device SMS

@@ -1,4 +1,4 @@
-import { parseSMS } from '../src/parser';
+import { parseSMS, wordsToNumber } from '../src/parser';
 
 describe('SMS Parsing Engine Tests', () => {
   
@@ -83,5 +83,74 @@ describe('SMS Parsing Engine Tests', () => {
       expect(tx.id).toBe('RF9876');
       expect(tx.balance).toBe(400.00);
     }
+  });
+});
+
+describe('Data units are never treated as money', () => {
+  test('ignores MB next to a number and keeps the real amount', () => {
+    const smsBody =
+      'Dear customer, you have purchased 1,024 MB data bundle for ETB 50.00. Your data balance is 1,024 MB. Your balance is ETB 1,200.00. Transaction ID: TX2608010020.';
+    const tx = parseSMS(smsBody, 'telebirr');
+
+    expect(tx).not.toBeNull();
+    expect(tx?.amount).toBe(50.0);
+    expect(tx?.balance).toBe(1200.0);
+  });
+
+  test('a data-unit balance cannot leak into the amount', () => {
+    // Before the fix the data balance (1024) was read as the money balance, the
+    // real balance stopped being filtered out, and 50.00 was recorded instead of 20.00.
+    const smsBody =
+      'ETB 20.00 has been deducted for 1024 MB. Your data balance is 1024 MB. Your balance is Br 50.00. Transaction ID: TX2608010021.';
+    const tx = parseSMS(smsBody, 'telebirr');
+
+    expect(tx).not.toBeNull();
+    expect(tx?.amount).toBe(20.0);
+    expect(tx?.balance).toBe(50.0);
+  });
+
+  test('a data-only notice creates no transaction', () => {
+    const smsBody =
+      'You have used 500 MB of your transfer bundle. Data balance is 500 MB.';
+    expect(parseSMS(smsBody, 'telebirr')).toBeNull();
+  });
+
+  test('GB / minutes / SMS units are ignored too', () => {
+    const smsBody =
+      'You bought 2 GB for Br 60.00 and 100 minutes for Br 25.00. Your balance is Br 300.00. Transaction ID: TX2608010022.';
+    const tx = parseSMS(smsBody, 'telebirr');
+
+    expect(tx).not.toBeNull();
+    expect(tx?.amount).toBe(60.0);
+    expect(tx?.balance).toBe(300.0);
+  });
+});
+
+describe('Amounts spelled out in words', () => {
+  test('wordsToNumber handles simple and compound numbers', () => {
+    expect(wordsToNumber(['one'])).toBe(1);
+    expect(wordsToNumber(['hundred'])).toBe(100);
+    expect(wordsToNumber(['one', 'hundred', 'fifty'])).toBe(150);
+    expect(wordsToNumber(['two', 'thousand', 'five', 'hundred'])).toBe(2500);
+    expect(wordsToNumber(['not', 'a', 'number'])).toBeNull();
+  });
+
+  test('reads a spelled-out birr amount', () => {
+    const smsBody =
+      'Dear customer, you have received one hundred fifty Birr from 0911223344. Your balance is Birr 400.00. Transaction ID: TX2608010023.';
+    const tx = parseSMS(smsBody, 'telebirr');
+
+    expect(tx).not.toBeNull();
+    expect(tx?.amount).toBe(150);
+    expect(tx?.type).toBe('credit');
+  });
+
+  test('reads a spelled-out amount with commas and "and"', () => {
+    const smsBody =
+      'You have paid two thousand and five hundred Birr. Your balance is Birr 1.00. Transaction ID: TX2608010024.';
+    const tx = parseSMS(smsBody, 'telebirr');
+
+    expect(tx).not.toBeNull();
+    expect(tx?.amount).toBe(2500);
   });
 });

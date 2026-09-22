@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Build
 import android.telephony.SmsMessage
 import com.facebook.react.bridge.Arguments
-import com.facebook.react.bridge.ReactApplicationContext
 
 class SmsReceiver : BroadcastReceiver() {
 
@@ -39,14 +38,19 @@ class SmsReceiver : BroadcastReceiver() {
             }
 
             if (senderAddress.isNotEmpty() && fullMessage.isNotEmpty()) {
-                val reactContext = SmsModule.currentReactContext ?: return
-                
-                val params = Arguments.createMap().apply {
-                    putString("address", senderAddress)
-                    putString("body", fullMessage)
-                    putDouble("date", date.toDouble())
+                // Always queue the message first: if the app process is dead or the
+                // JS runtime is detached, nothing else would keep this message.
+                SmsModule.enqueuePending(context, senderAddress, fullMessage, date)
+
+                val reactContext = SmsModule.currentReactContext
+                if (reactContext != null && SmsModule.isJsActive()) {
+                    val params = Arguments.createMap().apply {
+                        putString("address", senderAddress)
+                        putString("body", fullMessage)
+                        putDouble("date", date.toDouble())
+                    }
+                    SmsModule.sendEvent(reactContext, "onSmsReceived", params)
                 }
-                SmsModule.sendEvent(reactContext, "onSmsReceived", params)
             }
         } catch (e: Exception) {
             e.printStackTrace()

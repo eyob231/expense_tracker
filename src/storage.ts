@@ -1,21 +1,28 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Transaction } from './parser';
+import {
+  Transaction,
+  Category,
+  CategoryRule,
+  CategoryMappings,
+  normalizeText,
+  extractCounterparty,
+} from './parser';
+
+export type { CategoryRule };
 
 const STORAGE_KEY = '@expense_tracker:transactions';
 const PERMISSION_KEY = '@expense_tracker:sms_permission_asked';
 const APP_INITIALIZED_KEY = '@expense_tracker:initialized';
 const CATEGORY_MAPPINGS_KEY = '@expense_tracker:category_mappings';
 
-export interface CategoryRule { category: Category; name?: string; }
-
-export async function getCategoryMappings(): Promise<Record<string, CategoryRule>> {
+export async function getCategoryMappings(): Promise<CategoryMappings> {
   try {
     const jsonValue = await AsyncStorage.getItem(CATEGORY_MAPPINGS_KEY);
     if (!jsonValue) return {};
     const parsed = JSON.parse(jsonValue);
     
     // Migrate old string mappings to object mappings
-    const migrated: Record<string, CategoryRule> = {};
+    const migrated: CategoryMappings = {};
     for (const [key, val] of Object.entries(parsed)) {
       if (typeof val === 'string') {
         migrated[key] = { category: val as Category };
@@ -30,22 +37,52 @@ export async function getCategoryMappings(): Promise<Record<string, CategoryRule
   }
 }
 
-export async function saveCategoryMapping(description: string, category: Category, name?: string): Promise<void> {
+/**
+ * Store (or replace) a rule. Keys are normalized so that "Uber", "uber " and
+ * "UBER" all point at the same rule instead of silently duplicating.
+ */
+export async function saveCategoryMapping(keyword: string, category: Category, name?: string): Promise<void> {
   try {
     const mappings = await getCategoryMappings();
-    const normalizedKey = description.trim().toLowerCase();
+    const normalizedKey = normalizeText(keyword);
+    if (!normalizedKey) return;
     mappings[normalizedKey] = { category, name: name || undefined };
     await AsyncStorage.setItem(CATEGORY_MAPPINGS_KEY, JSON.stringify(mappings));
-    console.log(`[Storage] Saved category mapping: "${normalizedKey}" -> ${category} (Name: ${name || 'none'})`);
+    console.log(`[Storage] Saved rule: "${normalizedKey}" -> ${category} (Name: ${name || 'none'})`);
   } catch (e) {
     console.error('[Storage] Error saving category mapping:', e);
   }
 }
 
+/**
+ * Apply a rule to existing transactions and re-save them. Returns how many
+ * transactions changed. Matches the keyword against the raw SMS + description
+ * (same semantics as the live parser) and optionally renames the counterparty.
+ */
+export async function applyRuleToExisting(
+  keyword: string,
+  category: Category,
+  name?: string,
+): Promise<number> {
+  const needle = normalizeText(keyword);
+  if (!needle) return 0;
+  const transactions = await getTransactions();
+  let changed = 0;
+  const updated = transactions.map(tx => {
+    const haystack = normalizeText(`${tx.rawMessage || ''} ${tx.description}`);
+    const accountKey = normalizeText(extractCounterparty(tx.rawMessage, tx.description) || '');
+    if (!haystack.includes(needle) && accountKey !== needle) return tx;
+    changed++;
+    return { ...tx, category, description: name ? name : tx.description };
+  });
+  if (changed > 0) await saveTransactions(updated);
+  return changed;
+}
+
 export async function deleteCategoryMapping(description: string): Promise<void> {
   try {
     const mappings = await getCategoryMappings();
-    const normalizedKey = description.trim().toLowerCase();
+    const normalizedKey = normalizeText(description);
     delete mappings[normalizedKey];
     await AsyncStorage.setItem(CATEGORY_MAPPINGS_KEY, JSON.stringify(mappings));
     console.log(`[Storage] Deleted category mapping: "${normalizedKey}"`);
@@ -80,16 +117,25 @@ export async function saveTransactions(transactions: Transaction[]): Promise<voi
 }
 
 export async function addTransaction(transaction: Transaction): Promise<Transaction[]> {
+  await addTransactionIfNew(transaction);
+  return getTransactions();
+}
+
+/**
+ * Insert a transaction unless an identical id is already stored.
+ * Returns true when it was actually added (used to keep import counts honest).
+ */
+export async function addTransactionIfNew(transaction: Transaction): Promise<boolean> {
   const transactions = await getTransactions();
   // Avoid duplicate transaction IDs (especially for repeated SMS syncs)
   if (transactions.some(tx => tx.id === transaction.id)) {
     console.log(`[Storage] Duplicate skipped: ${transaction.id}`);
-    return transactions;
+    return false;
   }
   const updated = [transaction, ...transactions];
   await saveTransactions(updated);
   console.log(`[Storage] Added transaction: ${transaction.id} (${transaction.amount} ${transaction.type})`);
-  return updated;
+  return true;
 }
 
 export async function updateTransaction(updatedTx: Transaction): Promise<Transaction[]> {

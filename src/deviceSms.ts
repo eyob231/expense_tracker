@@ -1,14 +1,15 @@
 import { NativeModules, NativeEventEmitter, PermissionsAndroid, Platform, Alert } from 'react-native';
-import { parseSMS, Transaction } from './parser';
-import { addTransaction, getCategoryMappings } from './storage';
+import { parseSMS, looksLikeBankAlert, Transaction } from './parser';
+import { addTransactionIfNew, getCategoryMappings } from './storage';
 
 const { SmsModule } = NativeModules;
 
 // Only create the event emitter if the native module exists (Android only)
 const smsEventEmitter = SmsModule ? new NativeEventEmitter(SmsModule) : null;
 
-// Known bank/service sender IDs to filter for when syncing past messages
-// Add your bank's sender IDs here
+// Known bank/service sender IDs. Used for reporting, not as a hard filter —
+// messages from unrecognised senders are still attempted so a bank we don't
+// know about isn't silently ignored.
 const KNOWN_BANK_SENDERS = [
   // User's banks (primary)
   'cbe',          // Commercial Bank of Ethiopia
@@ -38,7 +39,7 @@ const KNOWN_BANK_SENDERS = [
   'zemen',
 ];
 
-function isFromKnownBank(address: string): boolean {
+export function isFromKnownBank(address: string): boolean {
   const addrLower = (address || '').toLowerCase();
   return KNOWN_BANK_SENDERS.some(sender => addrLower.includes(sender));
 }
@@ -86,6 +87,55 @@ export async function checkAndRequestPermissions(): Promise<boolean> {
   });
 }
 
+/**
+ * Try to turn a raw SMS into a stored transaction.
+ * Returns the parsed transaction, or null when the message isn't a bank alert.
+ */
+async function importSms(
+  address: string,
+  body: string,
+  date: number,
+): Promise<Transaction | null> {
+  // Known senders go straight to the parser; unknown senders must at least
+  // look like a bank alert so promotional SMS never gets imported.
+  if (!isFromKnownBank(address) && !looksLikeBankAlert(body)) {
+    return null;
+  }
+  const mappings = await getCategoryMappings();
+  const parsed = parseSMS(body, address, date, mappings);
+  if (!parsed) return null;
+  const added = await addTransactionIfNew(parsed);
+  return added ? parsed : null;
+}
+
+/**
+ * Import messages that arrived while the app wasn't running. The native
+ * receiver queues them in shared preferences so nothing is lost.
+ */
+export async function drainPendingSms(): Promise<number> {
+  if (Platform.OS !== 'android' || !SmsModule?.getPendingSms) return 0;
+  try {
+    const pending: { address: string; body: string; date: number }[] =
+      (await SmsModule.getPendingSms()) || [];
+    if (!pending.length) return 0;
+    let imported = 0;
+    for (const sms of pending) {
+      try {
+        const tx = await importSms(sms.address, sms.body, sms.date);
+        if (tx) imported++;
+      } catch (e) {
+        console.warn('[SMS Queue] Failed to import queued message:', e);
+      }
+    }
+    await SmsModule.clearPendingSms();
+    console.log(`[SMS Queue] Imported ${imported} of ${pending.length} queued messages.`);
+    return imported;
+  } catch (e) {
+    console.error('[SMS Queue] Error draining pending messages:', e);
+    return 0;
+  }
+}
+
 export async function syncDeviceSms(
   onProgress?: (stage: string, current: number, total: number) => void
 ): Promise<{ imported: number; total: number }> {
@@ -103,44 +153,50 @@ export async function syncDeviceSms(
   try {
     console.log('[SMS Sync] Fetching inbox messages...');
     if (onProgress) onProgress('Scanning inbox...', 0, 0);
-    
-    // Calculate timestamp for 30 days ago
-    const THIRTY_DAYS_MS = 30 * 24 * 60 * 60 * 1000;
-    const minDate = Date.now() - THIRTY_DAYS_MS;
+
+    // Calculate timestamp for 90 days ago
+    const NINETY_DAYS_MS = 90 * 24 * 60 * 60 * 1000;
+    const minDate = Date.now() - NINETY_DAYS_MS;
 
     // Fetch up to 1000 messages or until minDate is reached
-    const smsList: { address: string; body: string; date: number }[] = await SmsModule.getSmsList({ 
+    const smsList: { address: string; body: string; date: number }[] = await SmsModule.getSmsList({
       limit: 1000,
-      minDate: minDate 
+      minDate: minDate,
     });
     console.log(`[SMS Sync] Total inbox messages fetched: ${smsList.length}`);
     if (onProgress) onProgress('Filtering bank messages...', 0, smsList.length);
 
-    // Pre-filter to only known bank senders
-    const bankMessages = smsList.filter(sms => isFromKnownBank(sms.address));
-    console.log(`[SMS Sync] Bank messages found: ${bankMessages.length} from senders: ${[...new Set(bankMessages.map(s => s.address))].join(', ')}`);
+    // Prefer known bank senders, but also keep unrecognised senders whose
+    // message clearly looks like a bank alert.
+    const candidates = smsList.filter(
+      sms => isFromKnownBank(sms.address) || looksLikeBankAlert(sms.body),
+    );
+    const senders = [...new Set(candidates.map(s => s.address))];
+    console.log(`[SMS Sync] Candidate messages: ${candidates.length} from: ${senders.join(', ')}`);
 
     let imported = 0;
     let processedCount = 0;
 
     const mappings = await getCategoryMappings();
 
-    for (const sms of bankMessages) {
-      if (onProgress) onProgress(`Analyzing message from ${sms.address}...`, processedCount, bankMessages.length);
+    for (const sms of candidates) {
       const parsed = parseSMS(sms.body, sms.address, sms.date, mappings);
-      if (parsed) {
-        await addTransaction(parsed);
+      if (parsed && await addTransactionIfNew(parsed)) {
         imported++;
       }
       processedCount++;
       if (onProgress) {
-        onProgress(`Processing... ${processedCount}/${bankMessages.length}`, processedCount, bankMessages.length);
+        onProgress(`Processing… ${processedCount}/${candidates.length}`, processedCount, candidates.length);
       }
     }
 
-    if (onProgress) onProgress('Finalizing sync...', processedCount, bankMessages.length);
-    console.log(`[SMS Sync] Done. ${imported} imported of ${bankMessages.length} bank messages.`);
-    return { imported, total: bankMessages.length };
+    // Pick up anything the receiver stashed while the app was closed.
+    const queued = await drainPendingSms();
+    imported += queued;
+
+    if (onProgress) onProgress('Finalizing sync…', processedCount, candidates.length);
+    console.log(`[SMS Sync] Done. ${imported} imported of ${candidates.length} candidate messages.`);
+    return { imported, total: candidates.length };
   } catch (error) {
     console.error('[SMS Sync] Error:', error);
     if (onProgress) onProgress('Error occurred.', 0, 0);
@@ -148,28 +204,36 @@ export async function syncDeviceSms(
   }
 }
 
-export function subscribeToIncomingSms(
-  onNewTransaction: (tx: Transaction) => void
-): (() => void) | null {
-  if (Platform.OS !== 'android' || !smsEventEmitter) return null;
+// ── Live SMS listening ─────────────────────────────────────────────
+// A single native subscription is shared app-wide so new messages are
+// captured no matter which screen is open.
 
-  const subscription = smsEventEmitter.addListener('onSmsReceived', async (event: { address: string; body: string; date: number }) => {
-    try {
-      // Only process messages from known banks
-      if (!isFromKnownBank(event.address)) return;
+type SmsListener = (tx: Transaction) => void;
 
-      const mappings = await getCategoryMappings();
-      const parsed = parseSMS(event.body, event.address, event.date, mappings);
-      if (parsed) {
-        await addTransaction(parsed);
-        onNewTransaction(parsed);
+const listeners = new Set<SmsListener>();
+let nativeSubscriptionStarted = false;
+
+function ensureNativeSubscription() {
+  if (nativeSubscriptionStarted || Platform.OS !== 'android' || !smsEventEmitter) return;
+  nativeSubscriptionStarted = true;
+  smsEventEmitter.addListener(
+    'onSmsReceived',
+    async (event: { address: string; body: string; date: number }) => {
+      try {
+        const tx = await importSms(event.address, event.body, event.date);
+        if (tx) listeners.forEach(l => l(tx));
+      } catch (e) {
+        console.error('Failed to process incoming SMS event:', e);
       }
-    } catch (e) {
-      console.error('Failed to process incoming SMS event:', e);
-    }
-  });
+    },
+  );
+}
 
+/** Subscribe to newly detected bank transactions. Returns an unsubscribe fn. */
+export function subscribeToIncomingSms(onNewTransaction: SmsListener): () => void {
+  ensureNativeSubscription();
+  listeners.add(onNewTransaction);
   return () => {
-    subscription.remove();
+    listeners.delete(onNewTransaction);
   };
 }

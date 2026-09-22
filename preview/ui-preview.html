@@ -1,0 +1,807 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Expense Tracker — UI Preview</title>
+<style>
+  :root {
+    /* ── Dark (default) ─────────────────────────────── */
+    --bg:#0B0D11; --surface:#14171D; --surface2:#1B1F27; --elev:#242A35;
+    --primary:#2DD4BF; --primary-deep:#0F766E; --primary-soft:#5EEAD4;
+    --subtle:rgba(15,118,110,.16); --glow:rgba(15,118,110,.28);
+    --success:#22C55E; --danger:#F87171; --amber:#FBBF24;
+    --text:#F6F8FB; --text2:#C3CBD8; --muted:#8B95A5; --dim:#5A6474;
+    --border:rgba(255,255,255,.07); --border2:rgba(255,255,255,.12);
+    --on-accent:#FFFFFF;
+    --shadow:0 2px 8px rgba(0,0,0,.45);
+    --bezel:linear-gradient(160deg,#101717,#060a0a);
+    --font:-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  }
+  /* ── Light ────────────────────────────────────────── */
+  .light {
+    --bg:#F6F7F9; --surface:#FFFFFF; --surface2:#FFFFFF; --elev:#EAEEF3;
+    --primary:#0F766E; --primary-deep:#0F766E; --primary-soft:#14B8A6;
+    --subtle:rgba(15,118,110,.09); --glow:rgba(15,118,110,.14);
+    --success:#15803D; --danger:#DC2626; --amber:#B45309;
+    --text:#0F172A; --text2:#3F4A5A; --muted:#5F6A7C; --dim:#A3ACBA;
+    --border:rgba(15,23,42,.08); --border2:rgba(15,23,42,.16);
+    --shadow:0 1px 3px rgba(15,23,42,.07);
+    --bezel:linear-gradient(160deg,#e8ecf1,#c9d1db);
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:32px 28px 56px; background:#070B0B; color:#F6F8FB;
+    font-family:var(--font); -webkit-font-smoothing:antialiased; }
+  .page-head { margin:0 auto 22px; }
+  .kicker { font-size:10px; font-weight:800; letter-spacing:1.8px; color:#2DD4BF; text-transform:uppercase; }
+  h1 { font-size:24px; font-weight:800; letter-spacing:-.5px; margin:6px 0 8px; }
+  .page-head p { margin:0 0 8px; color:#8B95A5; font-size:13px; line-height:1.65; max-width:860px; }
+
+  /* palette comparison */
+  .panel { border:1px solid rgba(255,255,255,.08); border-radius:16px; padding:16px 18px; margin:18px 0; max-width:1060px; }
+  .panel h2 { font-size:12px; font-weight:800; letter-spacing:1.4px; text-transform:uppercase; color:#8B95A5; margin:0 0 12px; }
+  .swatchrow { display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
+  .swatchrow .tag { width:66px; font-size:11px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; }
+  .swatchrow .tag.bad { color:#F87171; } .swatchrow .tag.good { color:#2DD4BF; }
+  .sw { width:56px; height:34px; border-radius:9px; display:flex; align-items:center; justify-content:center;
+        font-size:9px; font-weight:800; color:#fff; box-shadow:inset 0 0 0 1px rgba(255,255,255,.08); }
+  .note-line { font-size:12px; color:#8B95A5; line-height:1.7; }
+
+  /* accents */
+  .accents { display:flex; gap:14px; flex-wrap:wrap; }
+  .acc { text-align:center; }
+  .acc .blob { width:64px; height:44px; border-radius:12px; display:flex; align-items:center; justify-content:center; color:#fff; font-weight:900; font-size:15px;
+    box-shadow:0 6px 16px rgba(0,0,0,.5); }
+  .acc .nm { font-size:10px; font-weight:800; letter-spacing:.8px; text-transform:uppercase; color:#8B95A5; margin-top:6px; }
+
+  .frames { display:flex; gap:24px; align-items:flex-start; overflow-x:auto; padding-bottom:12px; margin:0 auto; }
+  .frame { flex:0 0 auto; }
+  .frame > figcaption { margin-top:12px; text-align:center; font-size:11px; font-weight:800; letter-spacing:1.4px; color:#8B95A5; text-transform:uppercase; }
+  .device { width:326px; height:660px; padding:9px; border-radius:38px; background:var(--bezel);
+    box-shadow:0 26px 60px rgba(0,0,0,.65), inset 0 0 0 1px rgba(255,255,255,.05); }
+  .device.light { box-shadow:0 26px 60px rgba(0,0,0,.5), inset 0 0 0 1px rgba(0,0,0,.06); }
+  .screen { width:100%; height:100%; border-radius:30px; overflow:hidden; background:var(--bg);
+    position:relative; display:flex; flex-direction:column; color:var(--text); }
+  .scroll { overflow:hidden; flex:1; padding-bottom:12px; }
+  .statusbar { height:26px; display:flex; align-items:center; justify-content:space-between; padding:0 18px;
+    font-size:10px; font-weight:700; color:var(--text2); flex:0 0 auto; }
+  .statusbar .right { display:flex; gap:5px; align-items:center; opacity:.75; }
+  .bars { display:flex; gap:2px; align-items:flex-end; }
+  .bars i { display:block; width:3px; background:var(--text2); border-radius:1px; }
+  .bars i:nth-child(1){height:4px}.bars i:nth-child(2){height:6px}.bars i:nth-child(3){height:8px}.bars i:nth-child(4){height:10px}
+
+  .pad { padding:0 16px; }
+  .overline { font-size:9.5px; font-weight:800; letter-spacing:1.6px; color:var(--muted); text-transform:uppercase; }
+  .card { background:var(--surface); border-radius:20px; padding:16px; box-shadow:var(--shadow); }
+  .sec-head { display:flex; align-items:center; gap:8px; padding:0 16px; margin:14px 0 10px; }
+  .sec-head .dot { width:6px; height:6px; border-radius:3px; background:var(--primary); }
+  .sec-head .dot.lg { width:8px; height:8px; border-radius:4px; }
+  .sec-head .label { font-size:12px; font-weight:700; color:var(--text2); letter-spacing:.4px; flex:1; }
+  .sec-head .label.lg { font-size:17px; font-weight:800; color:var(--text); letter-spacing:-.3px; }
+  .sec-head .sub { font-size:11px; font-weight:600; color:var(--muted); }
+
+  .topbar { display:flex; align-items:center; gap:12px; padding:10px 16px 14px; }
+  .topbar .grow { flex:1; }
+  .greeting { font-size:13px; font-weight:600; color:var(--muted); }
+  .h1 { font-size:23px; font-weight:800; letter-spacing:-.6px; margin-top:2px; }
+  .subline { display:flex; align-items:center; gap:6px; margin-top:6px; }
+  .subline .dot { width:6px; height:6px; border-radius:3px; background:var(--success); }
+  .subline .txt { font-size:11px; font-weight:600; color:var(--muted); }
+  .round-btn { width:42px; height:42px; border-radius:21px; background:var(--surface); display:flex;
+    align-items:center; justify-content:center; color:var(--primary); font-size:17px; box-shadow:var(--shadow); }
+
+  /* hero — solid deep accent so white text passes contrast */
+  .hero { margin:0 16px 14px; border-radius:26px; padding:20px; position:relative; overflow:hidden;
+    background:var(--primary-deep); box-shadow:0 12px 30px rgba(15,118,110,.35); }
+  .light .hero { box-shadow:0 12px 26px rgba(15,118,110,.28); }
+  .hero .blob { position:absolute; top:-46px; right:-40px; width:170px; height:170px; border-radius:50%; background:rgba(255,255,255,.12); }
+  .hero .cap { font-size:9.5px; font-weight:800; letter-spacing:1.7px; color:rgba(255,255,255,.78); }
+  .hero-top { position:relative; display:flex; align-items:flex-start; gap:10px; }
+  .hero-left { flex:1; min-width:0; overflow:hidden; }
+  .hero .amtrow { display:flex; align-items:flex-end; gap:6px; margin-top:8px; }
+  .hero .sign { font-size:21px; font-weight:800; color:rgba(255,255,255,.62); margin-bottom:3px; }
+  .hero .cur { font-size:12.5px; font-weight:700; color:rgba(255,255,255,.72); margin-bottom:5px; }
+  .hero .amt { font-size:27px; font-weight:900; letter-spacing:-1.2px; line-height:1.05; white-space:nowrap; }
+  .hero .eye { margin-left:4px; margin-bottom:6px; font-size:13px; color:rgba(255,255,255,.75); }
+  .hero .spark { flex:0 0 auto; text-align:center; }
+  .hero .spark .cap2 { font-size:7.5px; font-weight:800; letter-spacing:1.2px; color:rgba(255,255,255,.6); margin-top:2px; }
+  .hero .divider { height:1px; background:rgba(255,255,255,.22); margin:16px 0 14px; }
+  .hero .stats { display:flex; align-items:center; }
+  .hero .stat { flex:1; display:flex; align-items:center; gap:8px; }
+  .hero .stat .d { width:8px; height:8px; border-radius:4px; }
+  .hero .stat .k { font-size:8.5px; font-weight:800; letter-spacing:1.2px; color:rgba(255,255,255,.78); }
+  .hero .stat .v { font-size:12.5px; font-weight:800; margin-top:2px; white-space:nowrap; letter-spacing:-.3px; }
+  .hero .vsep { width:1px; height:32px; background:rgba(255,255,255,.22); margin:0 8px; }
+
+  .qstats { display:flex; align-items:center; margin:0 16px 14px; padding:13px 8px; background:var(--surface); border-radius:20px; box-shadow:var(--shadow); }
+  .qstat { flex:1; text-align:center; }
+  .qstat .k { font-size:9px; font-weight:800; letter-spacing:1.4px; color:var(--muted); }
+  .qstat .v { font-size:15px; font-weight:700; color:var(--text2); margin-top:4px; letter-spacing:-.2px; }
+  .qsep { width:1px; height:26px; background:var(--border); }
+
+  .banner { display:flex; align-items:center; gap:12px; margin:0 16px 14px; padding:14px;
+    border:1px solid var(--primary); background:var(--subtle); border-radius:20px; }
+  .banner .ic { width:40px; height:40px; border-radius:20px; background:var(--glow); display:flex; align-items:center; justify-content:center; font-size:17px; color:var(--primary); }
+  .banner .t { font-size:13.5px; font-weight:700; }
+  .banner .s { font-size:11.5px; color:var(--primary); margin-top:2px; }
+  .badge { width:28px; height:28px; border-radius:14px; background:var(--primary-deep); color:var(--on-accent);
+    font-size:13px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+
+  .bankrow { display:flex; gap:10px; padding:0 16px; margin-bottom:16px; }
+  .bank { flex:1; background:var(--surface); border-radius:20px; padding:14px; box-shadow:var(--shadow); }
+  .bank .em { width:38px; height:38px; border-radius:19px; display:flex; align-items:center; justify-content:center; font-size:17px; margin-bottom:10px; }
+  .bank .nm { font-size:9.5px; font-weight:800; letter-spacing:.6px; color:var(--muted); }
+  .bank .bal { font-size:17px; font-weight:900; letter-spacing:-.5px; margin-top:4px; }
+  .bank .cur2 { font-size:9px; font-weight:600; color:var(--muted); margin-top:2px; }
+
+  .dayrow { display:flex; align-items:center; gap:8px; padding:0 18px; margin:8px 0 6px; }
+  .dayrow .d { width:5px; height:5px; border-radius:3px; background:var(--primary); }
+  .dayrow .l { font-size:12px; font-weight:700; color:var(--text2); flex:1; }
+  .dayrow .t { font-size:11px; font-weight:700; color:var(--danger); }
+  .tx { display:flex; align-items:center; gap:12px; margin:0 16px 6px; padding:12px 14px; background:var(--surface); border-radius:16px; box-shadow:var(--shadow); }
+  .tx .ic { width:42px; height:42px; border-radius:13px; display:flex; align-items:center; justify-content:center; font-size:19px; flex:0 0 auto; }
+  .tx .mid { flex:1; min-width:0; overflow:hidden; }
+  .tx .desc { font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .tx .meta { display:flex; align-items:center; gap:6px; margin-top:4px; white-space:nowrap; }
+  .tx .time { font-size:10.5px; color:var(--muted); }
+  .chip { font-size:9px; font-weight:700; padding:2px 7px; border-radius:8px; flex:0 0 auto; }
+  .chip.new { font-size:8.5px; font-weight:800; background:rgba(251,191,36,.16); color:var(--amber); border-radius:6px; }
+  .tx .right { text-align:right; }
+  .tx .amt { font-size:13.5px; font-weight:800; }
+  .tx .src { font-size:9.5px; color:var(--muted); margin-top:3px; letter-spacing:.4px; }
+  .debit { color:var(--danger); } .credit { color:var(--success); }
+
+  .tabbar { flex:0 0 auto; position:relative; background:var(--surface); box-shadow:0 -6px 20px rgba(0,0,0,.5); padding-bottom:8px; }
+  .light .tabbar { box-shadow:0 -6px 18px rgba(15,23,42,.10); }
+  .tabbar .row { display:flex; height:58px; align-items:center; }
+  .tab { flex:1; text-align:center; }
+  .tab .gi { font-size:17px; color:var(--muted); }
+  .tab .lb { font-size:9.5px; font-weight:600; color:var(--muted); margin-top:3px; }
+  .tab.on .gi, .tab.on .lb { color:var(--primary); }
+  .tab.on .lb { font-weight:800; }
+  .fab { position:absolute; top:-26px; left:50%; transform:translateX(-50%); width:58px; height:58px; border-radius:29px;
+    background:var(--primary-deep); color:var(--on-accent); display:flex; align-items:center; justify-content:center;
+    font-size:26px; font-weight:300; border:4px solid var(--surface); box-shadow:0 8px 22px rgba(15,118,110,.45); }
+
+  .search { display:flex; align-items:center; gap:8px; margin:0 16px 10px; height:44px; padding:0 14px; background:var(--surface); border-radius:16px; color:var(--muted); font-size:13px; box-shadow:var(--shadow); }
+  .filters { display:flex; gap:8px; padding:0 16px 12px; }
+  .fchip { font-size:11.5px; font-weight:600; color:var(--muted); padding:8px 14px; border-radius:999px; border:1px solid var(--border); background:var(--surface); white-space:nowrap; }
+  .fchip.on { background:var(--primary-deep); border-color:var(--primary-deep); color:var(--on-accent); font-weight:700; }
+  .strip { display:flex; align-items:center; margin:0 16px 10px; padding:10px 16px; background:var(--surface); border-radius:16px; box-shadow:var(--shadow); }
+  .strip .it { flex:1; }
+  .strip .k { font-size:9px; font-weight:800; letter-spacing:1.5px; color:var(--muted); margin-bottom:3px; }
+  .strip .v { font-size:15px; font-weight:800; letter-spacing:-.3px; }
+  .strip .sep { width:1px; height:28px; background:var(--border); margin:0 12px; }
+
+  .pills { display:flex; gap:10px; padding:0 16px; margin-bottom:14px; }
+  .pill { flex:1; border-radius:16px; padding:13px 10px; text-align:center; }
+  .pill .k { font-size:9.5px; font-weight:800; letter-spacing:.6px; color:var(--muted); margin-bottom:4px; }
+  .pill .v { font-size:13.5px; font-weight:900; letter-spacing:-.3px; }
+  .donutwrap { display:flex; gap:16px; align-items:center; margin-bottom:16px; }
+  .donut { width:112px; height:112px; border-radius:50%; flex:0 0 auto;
+    background:conic-gradient(#F97316 0 42%, #A855F7 42% 66%, #3B82F6 66% 84%, #14B8A6 84% 94%, #64748B 94% 100%);
+    -webkit-mask:radial-gradient(circle, transparent 44%, #000 45%); mask:radial-gradient(circle, transparent 44%, #000 45%); }
+  .legend { flex:1; display:flex; flex-direction:column; gap:8px; }
+  .legend .li { display:flex; align-items:center; gap:8px; font-size:11.5px; color:var(--text2); font-weight:600; }
+  .legend .li i { width:8px; height:8px; border-radius:3px; }
+  .legend .li span { margin-left:auto; font-weight:800; color:var(--muted); }
+  .bar { display:flex; align-items:center; gap:10px; margin-bottom:12px; }
+  .bar .em { width:24px; text-align:center; font-size:17px; }
+  .bar .mid { flex:1; }
+  .bar .lbl { font-size:11.5px; font-weight:600; color:var(--text2); margin-bottom:5px; }
+  .bar .track { height:6px; background:var(--elev); border-radius:3px; overflow:hidden; }
+  .bar .fill { height:100%; border-radius:3px; }
+  .bar .val { font-size:12.5px; font-weight:800; min-width:52px; text-align:right; }
+  .merchant { display:flex; align-items:center; gap:10px; padding:10px 0; border-bottom:1px solid var(--border); }
+  .merchant:last-child { border-bottom:0; }
+  .rank { width:26px; height:26px; border-radius:13px; background:var(--subtle); color:var(--primary); font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; }
+  .merchant .nm { font-size:13px; font-weight:600; flex:1; }
+  .merchant .am { font-size:12.5px; font-weight:800; color:var(--danger); }
+  .mom { display:flex; align-items:flex-end; justify-content:center; gap:44px; height:130px; padding-top:6px; }
+  .momcol { display:flex; flex-direction:column; align-items:center; height:100%; }
+  .momcol .lbl { font-size:10.5px; font-weight:700; color:var(--muted); margin-bottom:6px; }
+  .momcol .track { width:34px; flex:1; background:var(--elev); border-radius:6px; display:flex; align-items:flex-end; overflow:hidden; }
+  .momcol .fill { width:100%; border-radius:6px; }
+  .momcol .am { font-size:10.5px; font-weight:700; color:var(--muted); margin-top:6px; }
+  .delta { text-align:center; padding-bottom:26px; }
+  .delta .d { font-size:13px; font-weight:900; color:var(--success); }
+  .delta .s { font-size:9.5px; color:var(--muted); margin-top:2px; }
+
+  .perm { display:flex; gap:12px; align-items:flex-start; }
+  .perm .ic { width:40px; height:40px; border-radius:20px; background:rgba(34,197,94,.12); color:var(--success); display:flex; align-items:center; justify-content:center; font-size:18px; }
+  .perm .t { font-size:13.5px; font-weight:700; margin-bottom:4px; }
+  .perm .d { font-size:11.5px; color:var(--muted); line-height:1.55; }
+  .freq { background:var(--bg); border-radius:16px; padding:13px; margin-bottom:10px; }
+  .freq .top { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+  .freq .nm { font-size:13.5px; font-weight:700; }
+  .freq .mt { font-size:10.5px; color:var(--muted); margin-top:2px; }
+  .freq .apply { font-size:10.5px; font-weight:700; padding:6px 10px; border-radius:999px; border:1px solid var(--primary); color:var(--primary); background:var(--subtle); white-space:nowrap; }
+  .freq .chips { display:flex; gap:6px; margin-top:10px; }
+  .freq .c { font-size:10px; font-weight:600; color:var(--muted); padding:6px 10px; border-radius:999px; border:1px solid var(--border); background:var(--surface); }
+  .freq .c.on { color:var(--primary); border-color:var(--primary); background:var(--subtle); }
+  .ruleinput { margin:10px 0; height:42px; border-radius:14px; border:1px solid var(--border); background:var(--bg); display:flex; align-items:center; padding:0 14px; color:var(--muted); font-size:13px; }
+  .btn { display:flex; align-items:center; justify-content:center; gap:6px; height:44px; border-radius:14px; background:var(--primary-deep); color:var(--on-accent); font-size:13.5px; font-weight:700; }
+  .rule { display:flex; align-items:center; gap:8px; background:var(--bg); border-radius:12px; padding:10px 12px; margin-top:8px; }
+  .rule .kw { font-size:12px; font-weight:600; flex:1; }
+  .rule .ar { color:var(--muted); font-size:12px; }
+  .rule .cat { font-size:11px; font-weight:700; color:var(--primary); flex:1; text-align:right; }
+  .rule .del { width:22px; height:22px; border-radius:11px; background:rgba(248,113,113,.12); color:var(--danger); font-size:11px; display:flex; align-items:center; justify-content:center; }
+
+  /* appearance card */
+  .modes { display:flex; gap:8px; }
+  .mode { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; border-radius:14px;
+    border:1.5px solid var(--border); background:var(--bg); color:var(--muted); font-size:12px; font-weight:700; }
+  .mode.on { border-color:var(--primary); background:var(--subtle); color:var(--primary); }
+  .swatches { display:flex; gap:12px; padding:2px 0; }
+  .sws { width:38px; height:38px; border-radius:19px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:14px; }
+  .sws.on { box-shadow:0 0 0 2px var(--text); }
+  .hint { color:var(--muted); font-size:11px; font-weight:600; margin-top:8px; }
+  .flabel { color:var(--muted); font-size:10px; font-weight:700; letter-spacing:1px; text-transform:uppercase; margin:16px 0 10px; }
+
+  .sheet { margin:0 10px 10px; background:var(--surface2); border-radius:26px; padding:14px 0 22px; }
+  .handle { width:36px; height:4px; border-radius:2px; background:var(--border2); margin:0 auto 16px; }
+  .typetog { display:flex; gap:10px; padding:0 18px 16px; }
+  .tbtn { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:11px; border-radius:16px; border:1.5px solid var(--border); background:var(--surface); font-size:13px; font-weight:600; color:var(--muted); }
+  .tbtn.on.exp { border-color:var(--danger); background:rgba(248,113,113,.12); color:var(--danger); font-weight:800; }
+  .amtbox { text-align:center; margin-bottom:8px; }
+  .amtbox .v { font-size:46px; font-weight:900; letter-spacing:-2px; color:var(--danger); }
+  .amtbox .c { font-size:16px; font-weight:700; color:var(--muted); }
+  .keys { display:grid; grid-template-columns:repeat(3,1fr); gap:9px; padding:6px 12px 12px; }
+  .key { height:52px; border-radius:16px; background:var(--surface); color:var(--text); font-size:20px; font-weight:600; display:flex; align-items:center; justify-content:center; }
+  .key.bs { background:rgba(248,113,113,.12); color:var(--danger); font-size:18px; }
+  .next { margin:4px 18px 0; height:50px; border-radius:16px; background:var(--primary-deep); color:var(--on-accent); font-weight:800; font-size:16px; display:flex; align-items:center; justify-content:center; box-shadow:0 6px 20px rgba(15,118,110,.35); }
+  /* ── review / labelling bottom sheet ── */
+  .dim { position:absolute; inset:0; background:rgba(0,0,0,.55); }
+  .rvwrap { position:absolute; left:0; right:0; bottom:0; height:75%; display:flex; flex-direction:column;
+    background:var(--surface); border-radius:28px 28px 0 0; box-shadow:0 -14px 44px rgba(0,0,0,.6); }
+  .rv-handle { width:36px; height:4px; border-radius:2px; background:var(--border2); margin:10px auto 9px; flex:0 0 auto; }
+  .rv-head { display:flex; align-items:center; gap:10px; padding:0 18px 6px; flex:0 0 auto; }
+  .rv-title { font-size:18px; font-weight:800; letter-spacing:-.3px; }
+  .rv-sub { font-size:11px; font-weight:600; color:var(--muted); margin-top:2px; }
+  .rv-x { width:34px; height:34px; border-radius:17px; background:var(--elev); color:var(--muted); display:flex; align-items:center; justify-content:center; font-size:13px; flex:0 0 auto; }
+  .rv-bar { height:3px; border-radius:2px; background:var(--elev); margin:0 18px 4px; overflow:hidden; flex:0 0 auto; }
+  .rv-bar i { display:block; height:100%; width:50%; background:var(--primary); border-radius:2px; }
+  /* min-height:0 so the flex item actually clips instead of pushing the action row off-screen */
+  .rv-body { flex:1; min-height:0; overflow:hidden; padding:8px 18px 1px; }
+  .rv-src { display:flex; align-items:center; gap:10px; margin-bottom:10px; }
+  .rv-src .ic { width:38px; height:38px; border-radius:19px; background:var(--subtle); display:flex; align-items:center; justify-content:center; font-size:16px; flex:0 0 auto; }
+  .rv-src .txt { flex:1; min-width:0; }
+  .rv-src .nm { font-size:12.5px; font-weight:700; color:var(--text2); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .rv-src .dt { font-size:11px; font-weight:600; color:var(--muted); margin-top:2px; }
+  .rv-src .am { margin-left:auto; flex:0 0 auto; white-space:nowrap; font-size:19px; font-weight:900; color:var(--danger); letter-spacing:-.6px; }
+  .rv-raw { background:var(--bg); border-radius:12px; padding:9px 10px; font-size:10.5px; font-style:italic; color:var(--muted); line-height:1.45; margin-bottom:12px; }
+  .rv-types { display:flex; gap:10px; }
+  .rv-type { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; padding:9px; border-radius:16px; border:1.5px solid var(--border); background:var(--bg); font-size:13px; font-weight:700; color:var(--muted); }
+  .rv-type.on { border-color:var(--danger); background:rgba(248,113,113,.13); color:var(--danger); }
+  .rv-label { font-size:10px; font-weight:800; letter-spacing:1.5px; text-transform:uppercase; color:var(--muted); margin:11px 0 7px; }
+  .rv-input { background:var(--bg); border:1px solid var(--border); border-radius:16px; padding:11px 14px; font-size:14px; color:var(--text); }
+  .rv-cats { display:flex; flex-wrap:wrap; gap:8px; }
+  .rv-cat { width:calc(33.333% - 6px); border:1.5px solid var(--border); background:var(--bg); border-radius:16px; padding:8px 4px; text-align:center; }
+  .rv-cat .em { font-size:15px; }
+  .rv-cat .lb { font-size:9.5px; font-weight:700; color:var(--muted); margin-top:4px; }
+  .rv-cat.on { border-color:#F97316; background:rgba(249,115,22,.1); }
+  .rv-cat.on .lb { color:#F97316; }
+  .rv-actions { display:flex; gap:12px; padding:12px 18px 0; flex:0 0 auto; }
+  .rv-skip { flex:1; height:46px; display:flex; align-items:center; justify-content:center; border-radius:16px; border:1px solid var(--border); background:var(--elev); font-size:14.5px; font-weight:700; color:var(--text2); }
+  .rv-go { flex:2; height:46px; display:flex; align-items:center; justify-content:center; gap:6px; border-radius:16px; background:var(--primary-deep); color:var(--on-accent); font-size:14.5px; font-weight:800; }
+  .rv-rem { text-align:center; font-size:10.5px; font-weight:600; color:var(--muted); padding:8px 0 16px; flex:0 0 auto; }
+
+  .note { max-width:1720px; margin:22px auto 0; color:#5A6474; font-size:12px; line-height:1.7; }
+</style>
+</head>
+<body>
+  <div class="page-head">
+    <div class="kicker">Static design preview</div>
+    <h1>Expense Tracker — palette + theme system</h1>
+    <p>
+      Colours now come from <code>src/theme.ts</code> as three tokens per accent:
+      <strong>bright</strong> (icons/text on dark), <strong>deep</strong> (fills — guaranteed contrast with white), and
+      <strong>soft</strong>. Surfaces are neutral, so the accent is the only saturated thing on screen.
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Why the palette changed</h2>
+    <div class="swatchrow">
+      <span class="tag bad">Before</span>
+      <span class="sw" style="background:#0A0F0F">bg</span>
+      <span class="sw" style="background:#131A1A">surface</span>
+      <span class="sw" style="background:#1F2D2D">elevated</span>
+      <span class="sw" style="background:#14B8A6">primary</span>
+      <span class="sw" style="background:#14B8A6;color:#fff">2.3:1</span>
+      <span class="note-line">Surfaces were green-tinted, so teal-on-teal-on-teal left nothing to pop — and white text on
+        <code>#14B8A6</code> lands at <strong>2.3:1</strong>, under the 4.5:1 (even 3:1) requirement.</span>
+    </div>
+    <div class="swatchrow">
+      <span class="tag good">After</span>
+      <span class="sw" style="background:#0B0D11">bg</span>
+      <span class="sw" style="background:#14171D">surface</span>
+      <span class="sw" style="background:#242A35">elevated</span>
+      <span class="sw" style="background:#2DD4BF;color:#0B0D11">10.1:1</span>
+      <span class="sw" style="background:#0F766E">5.4:1</span>
+      <span class="note-line">Neutral surfaces with a slight blue cast match the slate text tokens; the bright accent is for
+        text/icons (<strong>10.1:1</strong>) and the deep accent for fills (<strong>5.4:1</strong>).</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>Accent options (deep / fill variant shown)</h2>
+    <div class="accents">
+      <div class="acc"><div class="blob" style="background:#0F766E">Br</div><div class="nm">Teal</div></div>
+      <div class="acc"><div class="blob" style="background:#4338CA">Br</div><div class="nm">Indigo</div></div>
+      <div class="acc"><div class="blob" style="background:#6D28D9">Br</div><div class="nm">Violet</div></div>
+      <div class="acc"><div class="blob" style="background:#047857">Br</div><div class="nm">Emerald</div></div>
+      <div class="acc"><div class="blob" style="background:#B45309">Br</div><div class="nm">Amber</div></div>
+      <div class="acc"><div class="blob" style="background:#BE123C">Br</div><div class="nm">Rose</div></div>
+    </div>
+  </div>
+
+  <div class="frames">
+
+    <!-- ══════════ DASHBOARD (dark) ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar">
+            <div class="grow">
+              <div class="greeting">Good evening 🌙</div>
+              <div class="h1">Expense Tracker</div>
+              <div class="subline"><span class="dot"></span><span class="txt">Auto-importing bank SMS</span></div>
+            </div>
+            <div class="round-btn">⟳</div>
+          </div>
+          <div class="hero">
+            <span class="blob"></span>
+            <div class="hero-top">
+              <div class="hero-left">
+                <div class="cap">SPENT · SEPTEMBER</div>
+                <div class="amtrow"><span class="sign">−</span><span class="cur">Br</span><span class="amt">4,320.50</span><span class="eye">👁</span></div>
+              </div>
+              <div class="spark">
+                <svg width="74" height="36" viewBox="0 0 84 40">
+                  <defs><linearGradient id="sf" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+                  </linearGradient></defs>
+                  <path d="M0,40 L0,30 L14,22 L28,27 L42,14 L56,19 L70,9 L84,12 L84,40 Z" fill="url(#sf)"/>
+                  <polyline points="0,30 14,22 28,27 42,14 56,19 70,9 84,12" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="84" cy="12" r="2.5" fill="#fff"/>
+                </svg>
+                <div class="cap2">LAST 7 DAYS</div>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="stats">
+              <div class="stat"><span class="d" style="background:var(--success)"></span><div><div class="k">INCOME</div><div class="v" style="color:var(--success)">+Br 12,000.00</div></div></div>
+              <span class="vsep"></span>
+              <div class="stat"><span class="d" style="background:#fff"></span><div><div class="k">LEFT OVER</div><div class="v" style="color:#fff">+Br 7,679.50</div></div></div>
+            </div>
+          </div>
+          <div class="qstats">
+            <div class="qstat"><div class="k">AVG / DAY</div><div class="v">Br 144.02</div></div>
+            <span class="qsep"></span>
+            <div class="qstat"><div class="k">BIGGEST</div><div class="v">Br 1,250.00</div></div>
+            <span class="qsep"></span>
+            <div class="qstat"><div class="k">THIS MONTH</div><div class="v">27</div></div>
+          </div>
+          <div class="banner">
+            <div class="ic">✉</div>
+            <div style="flex:1"><div class="t">3 new SMS transactions</div><div class="s">Label them one by one →</div></div>
+            <div class="badge">3</div>
+          </div>
+          <div class="sec-head"><span class="dot"></span><span class="label">Account balances</span><span class="sub">Latest reading</span></div>
+          <div class="bankrow">
+            <div class="bank"><div class="em" style="background:rgba(96,165,250,.18)">🏦</div><div class="nm">CBE</div><div class="bal" style="color:#60A5FA">10,500.50</div><div class="cur2">ETB</div></div>
+            <div class="bank"><div class="em" style="background:rgba(52,211,153,.18)">🟢</div><div class="nm">CBE BIRR</div><div class="bal" style="color:#34D399">2,340.00</div><div class="cur2">ETB</div></div>
+            <div class="bank"><div class="em" style="background:rgba(167,139,250,.18)">📱</div><div class="nm">TELEBIRR</div><div class="bal" style="color:#A78BFA">750.25</div><div class="cur2">ETB</div></div>
+          </div>
+          <div class="sec-head"><span class="dot lg"></span><span class="label lg">Recent activity</span><span class="sub">27 total</span></div>
+          <div class="dayrow"><span class="d"></span><span class="l">Today</span><span class="t">-Br 430.00</span></div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(249,115,22,.2)">🍔</div>
+            <div class="mid"><div class="desc">Paid to Sheger Cafe</div>
+              <div class="meta"><span class="time">18:42</span><span class="chip" style="background:rgba(249,115,22,.18);color:#F97316">Food &amp; Dining</span><span class="chip new">NEW</span></div></div>
+            <div class="right"><div class="amt debit">-Br 320.00</div><div class="src">TELEBIRR</div></div>
+          </div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(59,130,246,.2)">🚗</div>
+            <div class="mid"><div class="desc">Ride to Bole</div>
+              <div class="meta"><span class="time">08:15</span><span class="chip" style="background:rgba(59,130,246,.18);color:#3B82F6">Transportation</span></div></div>
+            <div class="right"><div class="amt debit">-Br 110.00</div><div class="src">CBE</div></div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="fab">+</div>
+          <div class="row">
+            <div class="tab on"><div class="gi">⌂</div><div class="lb">Home</div></div>
+            <div class="tab"><div class="gi">⇅</div><div class="lb">Ledger</div></div>
+            <div class="tab"><div class="gi">◔</div><div class="lb">Insights</div></div>
+            <div class="tab"><div class="gi">⚙</div><div class="lb">Settings</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Dashboard · dark</figcaption>
+    </figure>
+
+    <!-- ══════════ DASHBOARD (light) ══════════ -->
+    <figure class="frame">
+      <div class="device light light"><div class="screen light">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar">
+            <div class="grow">
+              <div class="greeting">Good morning ☀️</div>
+              <div class="h1">Expense Tracker</div>
+              <div class="subline"><span class="dot"></span><span class="txt">Auto-importing bank SMS</span></div>
+            </div>
+            <div class="round-btn">⟳</div>
+          </div>
+          <div class="hero">
+            <span class="blob"></span>
+            <div class="hero-top">
+              <div class="hero-left">
+                <div class="cap">SPENT · SEPTEMBER</div>
+                <div class="amtrow"><span class="sign">−</span><span class="cur">Br</span><span class="amt">4,320.50</span><span class="eye">👁</span></div>
+              </div>
+              <div class="spark">
+                <svg width="74" height="36" viewBox="0 0 84 40">
+                  <defs><linearGradient id="sf2" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color="#fff" stop-opacity=".35"/><stop offset="1" stop-color="#fff" stop-opacity="0"/>
+                  </linearGradient></defs>
+                  <path d="M0,40 L0,30 L14,22 L28,27 L42,14 L56,19 L70,9 L84,12 L84,40 Z" fill="url(#sf2)"/>
+                  <polyline points="0,30 14,22 28,27 42,14 56,19 70,9 84,12" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  <circle cx="84" cy="12" r="2.5" fill="#fff"/>
+                </svg>
+                <div class="cap2">LAST 7 DAYS</div>
+              </div>
+            </div>
+            <div class="divider"></div>
+            <div class="stats">
+              <div class="stat"><span class="d" style="background:#6EE7B7"></span><div><div class="k">INCOME</div><div class="v" style="color:#A7F3D0">+Br 12,000.00</div></div></div>
+              <span class="vsep"></span>
+              <div class="stat"><span class="d" style="background:#fff"></span><div><div class="k">LEFT OVER</div><div class="v" style="color:#fff">+Br 7,679.50</div></div></div>
+            </div>
+          </div>
+          <div class="qstats">
+            <div class="qstat"><div class="k">AVG / DAY</div><div class="v">Br 144.02</div></div>
+            <span class="qsep"></span>
+            <div class="qstat"><div class="k">BIGGEST</div><div class="v">Br 1,250.00</div></div>
+            <span class="qsep"></span>
+            <div class="qstat"><div class="k">THIS MONTH</div><div class="v">27</div></div>
+          </div>
+          <div class="banner">
+            <div class="ic">✉</div>
+            <div style="flex:1"><div class="t">3 new SMS transactions</div><div class="s">Label them one by one →</div></div>
+            <div class="badge">3</div>
+          </div>
+          <div class="sec-head"><span class="dot lg"></span><span class="label lg">Recent activity</span><span class="sub">27 total</span></div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(249,115,22,.14)">🍔</div>
+            <div class="mid"><div class="desc">Paid to Sheger Cafe</div>
+              <div class="meta"><span class="time">18:42</span><span class="chip" style="background:rgba(249,115,22,.14);color:#C2410C">Food &amp; Dining</span></div></div>
+            <div class="right"><div class="amt debit">-Br 320.00</div><div class="src">TELEBIRR</div></div>
+          </div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(34,197,94,.14)">💰</div>
+            <div class="mid"><div class="desc">Mom</div>
+              <div class="meta"><span class="time">09:15</span><span class="chip" style="background:rgba(21,128,61,.12);color:#15803D">Salary</span></div></div>
+            <div class="right"><div class="amt credit">+Br 12,000.00</div><div class="src">TELEBIRR</div></div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="fab">+</div>
+          <div class="row">
+            <div class="tab on"><div class="gi">⌂</div><div class="lb">Home</div></div>
+            <div class="tab"><div class="gi">⇅</div><div class="lb">Ledger</div></div>
+            <div class="tab"><div class="gi">◔</div><div class="lb">Insights</div></div>
+            <div class="tab"><div class="gi">⚙</div><div class="lb">Settings</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Dashboard · light</figcaption>
+    </figure>
+
+    <!-- ══════════ LEDGER ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar" style="padding-bottom:12px">
+            <div class="grow"><div class="overline" style="color:var(--primary)">LEDGER</div><div class="h1">All Transactions</div></div>
+            <div class="chip" style="background:var(--subtle);color:var(--primary);font-size:12px;padding:5px 12px;border-radius:20px">27</div>
+          </div>
+          <div class="search">🔍 Search transactions…</div>
+          <div class="filters"><span class="fchip on">All</span><span class="fchip">Expenses</span><span class="fchip">Income</span><span class="fchip">Food &amp; Dining</span></div>
+          <div class="strip">
+            <div class="it"><div class="k">SPENT</div><div class="v" style="color:var(--danger)">Br 4,320.50</div></div>
+            <div class="sep"></div>
+            <div class="it"><div class="k">RECEIVED</div><div class="v" style="color:var(--success)">Br 12,000.00</div></div>
+          </div>
+          <div class="dayrow"><span class="d"></span><span class="l">Today</span><span class="t">-Br 430.00</span></div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(249,115,22,.2)">🍔</div>
+            <div class="mid"><div class="desc">Paid to Sheger Cafe</div>
+              <div class="meta"><span class="time">18:42 · TELEBIRR</span><span class="chip new">New</span></div></div>
+            <div class="right"><div class="amt debit">-Br 320.00</div><div class="src">Bal 750.25</div></div>
+          </div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(59,130,246,.2)">🚗</div>
+            <div class="mid"><div class="desc">Ride to Bole</div>
+              <div class="meta"><span class="time">08:15 · CBE</span></div></div>
+            <div class="right"><div class="amt debit">-Br 110.00</div><div class="src">Bal 10,500.50</div></div>
+          </div>
+          <div class="dayrow"><span class="d"></span><span class="l">Yesterday</span><span class="t">-Br 1,250.00</span></div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(34,197,94,.2)">💰</div>
+            <div class="mid"><div class="desc">Mom</div>
+              <div class="meta"><span class="time">09:15 · TELEBIRR</span><span class="chip" style="background:rgba(34,197,94,.18);color:#4ADE80">Salary</span></div></div>
+            <div class="right"><div class="amt credit">+Br 12,000.00</div><div class="src">Bal 12,750.50</div></div>
+          </div>
+          <div class="tx">
+            <div class="ic" style="background:rgba(168,85,247,.2)">🛍️</div>
+            <div class="mid"><div class="desc">Debit from Acc: 1000******1234</div>
+              <div class="meta"><span class="time">19:03 · CBE</span></div></div>
+            <div class="right"><div class="amt debit">-Br 1,250.00</div><div class="src">Bal 10,610.50</div></div>
+          </div>
+          <div style="text-align:center;padding:20px 0 8px">
+            <div style="font-size:11.5px;font-weight:600;color:var(--muted)">Showing 15 of 27</div>
+            <div style="display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:9px 18px;border-radius:999px;background:var(--subtle);color:var(--primary);font-size:12.5px;font-weight:800">⌄ Load more</div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="fab">+</div>
+          <div class="row">
+            <div class="tab"><div class="gi">⌂</div><div class="lb">Home</div></div>
+            <div class="tab on"><div class="gi">⇅</div><div class="lb">Ledger</div></div>
+            <div class="tab"><div class="gi">◔</div><div class="lb">Insights</div></div>
+            <div class="tab"><div class="gi">⚙</div><div class="lb">Settings</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Ledger</figcaption>
+    </figure>
+
+    <!-- ══════════ INSIGHTS ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar" style="padding-bottom:16px">
+            <div class="grow"><div class="overline" style="color:var(--primary)">INSIGHTS</div><div class="h1">Spending Overview</div></div>
+          </div>
+          <div class="pills">
+            <div class="pill" style="background:rgba(34,197,94,.12)"><div class="k">INCOME</div><div class="v" style="color:var(--success)">Br 12,000</div></div>
+            <div class="pill" style="background:rgba(248,113,113,.12)"><div class="k">SPENT</div><div class="v" style="color:var(--danger)">Br 4,320</div></div>
+            <div class="pill" style="background:var(--subtle)"><div class="k">SAVED</div><div class="v" style="color:var(--primary)">Br 7,679</div></div>
+          </div>
+          <div class="pad">
+            <div class="card" style="margin-bottom:14px">
+              <div style="font-size:15px;font-weight:800">Spending by Category</div>
+              <div style="font-size:11.5px;color:var(--muted);margin:2px 0 16px">September</div>
+              <div class="donutwrap">
+                <div class="donut"></div>
+                <div class="legend">
+                  <div class="li"><i style="background:#F97316"></i>Food &amp; Dining<span>42%</span></div>
+                  <div class="li"><i style="background:#A855F7"></i>Shopping<span>24%</span></div>
+                  <div class="li"><i style="background:#3B82F6"></i>Transport<span>18%</span></div>
+                  <div class="li"><i style="background:#14B8A6"></i>Transfers<span>10%</span></div>
+                  <div class="li"><i style="background:#64748B"></i>Other<span>6%</span></div>
+                </div>
+              </div>
+              <div class="bar"><div class="em">🍔</div><div class="mid"><div class="lbl">Food &amp; Dining</div><div class="track"><div class="fill" style="width:100%;background:#F97316"></div></div></div><div class="val" style="color:#F97316">1,815</div></div>
+              <div class="bar"><div class="em">🛍️</div><div class="mid"><div class="lbl">Shopping</div><div class="track"><div class="fill" style="width:57%;background:#A855F7"></div></div></div><div class="val" style="color:#A855F7">1,037</div></div>
+              <div class="bar"><div class="em">🚗</div><div class="mid"><div class="lbl">Transportation</div><div class="track"><div class="fill" style="width:43%;background:#3B82F6"></div></div></div><div class="val" style="color:#3B82F6">778</div></div>
+            </div>
+            <div class="card" style="margin-bottom:14px">
+              <div style="font-size:15px;font-weight:800">Top Merchants</div>
+              <div style="font-size:11.5px;color:var(--muted);margin:2px 0 8px">September · expenses</div>
+              <div class="merchant"><div class="rank">#1</div><div class="nm">Sheger Cafe</div><div class="am">Br 960.00</div></div>
+              <div class="merchant"><div class="rank">#2</div><div class="nm">Ride to Bole</div><div class="am">Br 540.00</div></div>
+              <div class="merchant"><div class="rank">#3</div><div class="nm">1000******1234</div><div class="am">Br 430.00</div></div>
+            </div>
+            <div class="card">
+              <div style="font-size:15px;font-weight:800">Month-over-Month</div>
+              <div style="font-size:11.5px;color:var(--muted);margin:2px 0 6px">Spending comparison</div>
+              <div class="mom">
+                <div class="momcol"><div class="lbl">Aug</div><div class="track"><div class="fill" style="height:86%;background:var(--muted)"></div></div><div class="am">5.0k</div></div>
+                <div class="delta"><div class="d">−Br 680</div><div class="s">vs last mo.</div></div>
+                <div class="momcol"><div class="lbl">Sep</div><div class="track"><div class="fill" style="height:74%;background:var(--primary)"></div></div><div class="am">4.3k</div></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="fab">+</div>
+          <div class="row">
+            <div class="tab"><div class="gi">⌂</div><div class="lb">Home</div></div>
+            <div class="tab"><div class="gi">⇅</div><div class="lb">Ledger</div></div>
+            <div class="tab on"><div class="gi">◔</div><div class="lb">Insights</div></div>
+            <div class="tab"><div class="gi">⚙</div><div class="lb">Settings</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Insights</figcaption>
+    </figure>
+
+    <!-- ══════════ SETTINGS (appearance) ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar" style="padding-bottom:16px">
+            <div class="grow"><div class="overline" style="color:var(--primary)">SETTINGS</div><div class="h1">Settings &amp; Tools</div></div>
+          </div>
+          <div class="pad">
+            <div class="card" style="margin-bottom:14px">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+                <div style="width:34px;height:34px;border-radius:10px;background:var(--subtle);color:var(--primary);display:flex;align-items:center;justify-content:center">🎨</div>
+                <div style="font-size:15px;font-weight:800">Appearance</div>
+              </div>
+              <div class="hint" style="margin-top:0;margin-bottom:10px">Choose a mode and an accent colour. Saved on this device.</div>
+              <div class="flabel" style="margin-top:0">Mode</div>
+              <div class="modes">
+                <div class="mode">☼ Auto</div>
+                <div class="mode">☀ Light</div>
+                <div class="mode on">☾ Dark</div>
+              </div>
+              <div class="flabel">Accent</div>
+              <div class="swatches">
+                <div class="sws on" style="background:#0F766E">✓</div>
+                <div class="sws" style="background:#4338CA"></div>
+                <div class="sws" style="background:#6D28D9"></div>
+                <div class="sws" style="background:#047857"></div>
+                <div class="sws" style="background:#B45309"></div>
+                <div class="sws" style="background:#BE123C"></div>
+              </div>
+              <div class="hint">Teal selected</div>
+            </div>
+
+            <div class="card" style="margin-bottom:14px">
+              <div class="perm">
+                <div class="ic">✓</div>
+                <div><div class="t">Read SMS — Granted</div><div class="d">Bank messages are read and logged automatically — no manual syncing needed.</div></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">
+                <div style="width:34px;height:34px;border-radius:10px;background:var(--subtle);color:var(--primary);display:flex;align-items:center;justify-content:center">👥</div>
+                <div style="font-size:15px;font-weight:800">Frequent Accounts</div>
+              </div>
+              <div class="freq">
+                <div class="top">
+                  <div><div class="nm">0911223344</div><div class="mt">4× · Br 1,240</div></div>
+                  <div class="apply">💰 Salary ✓</div>
+                </div>
+                <div class="chips"><span class="c on">💰 Salary</span><span class="c">🍔 Food</span><span class="c">📲 Transfers</span><span class="c">🏷️ Other</span></div>
+              </div>
+              <div class="freq">
+                <div class="top">
+                  <div><div class="nm">1000******1234</div><div class="mt">3× · Br 4,070</div></div>
+                  <div class="apply">🛍️ Shopping ✓</div>
+                </div>
+                <div class="chips"><span class="c">🚗 Transport</span><span class="c on">🛍️ Shopping</span><span class="c">🏷️ Other</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="tabbar">
+          <div class="fab">+</div>
+          <div class="row">
+            <div class="tab"><div class="gi">⌂</div><div class="lb">Home</div></div>
+            <div class="tab"><div class="gi">⇅</div><div class="lb">Ledger</div></div>
+            <div class="tab"><div class="gi">◔</div><div class="lb">Insights</div></div>
+            <div class="tab on"><div class="gi">⚙</div><div class="lb">Settings</div></div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Settings · appearance</figcaption>
+    </figure>
+
+    <!-- ══════════ ADD TRANSACTION ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar" style="padding-bottom:16px">
+            <div class="grow"><div class="overline" style="color:var(--muted)">HOME</div><div class="h1" style="color:var(--dim)">Expense Tracker</div></div>
+          </div>
+          <div class="sheet">
+            <div class="handle"></div>
+            <div class="typetog">
+              <div class="tbtn on exp">📉 Expense</div>
+              <div class="tbtn">📈 Income</div>
+            </div>
+            <div class="amtbox"><span class="v">320</span> <span class="c">ETB</span></div>
+            <div class="keys">
+              <div class="key">1</div><div class="key">2</div><div class="key">3</div>
+              <div class="key">4</div><div class="key">5</div><div class="key">6</div>
+              <div class="key">7</div><div class="key">8</div><div class="key">9</div>
+              <div class="key">.</div><div class="key">0</div><div class="key bs">⌫</div>
+            </div>
+            <div class="next">Continue →</div>
+          </div>
+        </div>
+      </div></div>
+      <figcaption>Add · Amount</figcaption>
+    </figure>
+
+    <!-- ══════════ LABELLING BOTTOM SHEET (over the dashboard) ══════════ -->
+    <figure class="frame">
+      <div class="device"><div class="screen light">
+        <div class="statusbar"><span>9:41</span><span class="right"><span class="bars"><i></i><i></i><i></i><i></i></span> 82%</span></div>
+        <div class="scroll">
+          <div class="topbar">
+            <div class="grow"><div class="greeting">Good evening 🌙</div><div class="h1">Expense Tracker</div></div>
+            <div class="round-btn">⟳</div>
+          </div>
+          <div class="hero">
+            <span class="blob"></span>
+            <div class="hero-top">
+              <div class="hero-left">
+                <div class="cap">SPENT · SEPTEMBER</div>
+                <div class="amtrow"><span class="sign">−</span><span class="cur">Br</span><span class="amt">4,320.50</span></div>
+              </div>
+            </div>
+          </div>
+          <div class="qstats">
+            <div class="qstat"><div class="k">AVG / DAY</div><div class="v">Br 144.02</div></div>
+            <span class="qsep"></span>
+            <div class="qstat"><div class="k">BIGGEST</div><div class="v">Br 1,250.00</div></div>
+          </div>
+        </div>
+        <div class="dim"></div>
+        <div class="rvwrap">
+          <div class="rv-handle"></div>
+          <div class="rv-head">
+            <div style="flex:1">
+              <div class="rv-title">Label transaction</div>
+              <div class="rv-sub">1 of 2</div>
+            </div>
+            <div class="rv-x">✕</div>
+          </div>
+          <div class="rv-bar"><i></i></div>
+          <div class="rv-body">
+            <div class="rv-src">
+              <div class="ic">📱</div>
+              <div class="txt"><div class="nm">SMS from TELEBIRR</div><div class="dt">Sep 22, 18:42</div></div>
+              <div class="am">−Br 320.00</div>
+            </div>
+            <div class="rv-raw">Dear customer, you have paid Br 320.00 to Sheger Cafe. Your balance is Br 750.25.</div>
+            <div class="rv-types">
+              <div class="rv-type on">📉 Expense</div>
+              <div class="rv-type">📈 Income</div>
+            </div>
+            <div class="rv-label">Description</div>
+            <div class="rv-input">Paid to Sheger Cafe</div>
+            <div class="rv-label">Category</div>
+            <div class="rv-cats">
+              <div class="rv-cat on"><div class="em">🍔</div><div class="lb">Food &amp; Dining</div></div>
+              <div class="rv-cat"><div class="em">🛍️</div><div class="lb">Shopping</div></div>
+              <div class="rv-cat"><div class="em">🚗</div><div class="lb">Transportation</div></div>
+              <div class="rv-cat"><div class="em">💰</div><div class="lb">Salary</div></div>
+              <div class="rv-cat"><div class="em">📲</div><div class="lb">Transfers</div></div>
+              <div class="rv-cat"><div class="em">🏷️</div><div class="lb">Other</div></div>
+            </div>
+          </div>
+          <div class="rv-actions">
+            <div class="rv-skip">Skip</div>
+            <div class="rv-go">✓ Confirm</div>
+          </div>
+          <div class="rv-rem">2 more waiting in the Ledger</div>
+        </div>
+      </div></div>
+      <figcaption>Label sheet · 75% height</figcaption>
+    </figure>
+
+  </div>
+
+  <p class="note">
+    Implemented in the app: <code>ThemeProvider</code> / <code>useTheme()</code> / <code>useThemedStyles()</code> with the
+    choice persisted to AsyncStorage; every screen and component builds its StyleSheet from the active theme, so switching
+    takes effect instantly with no reload. The Settings screen has the Mode (Auto / Light / Dark) and six-accent picker shown
+    above. Filled surfaces (hero, FAB, primary buttons, and the green save/import buttons) use the deep variants, which is
+    what brings the previously failing white-on-colour contrast up to 5.4:1 and 5.1:1.
+  </p>
+</body>
+</html>

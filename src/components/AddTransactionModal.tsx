@@ -1,18 +1,19 @@
 import React, { useState } from 'react';
 import {
+  KeyboardAvoidingView,
   Modal,
+  Platform,
+  ScrollView,
   StyleSheet,
   Text,
   TextInput,
   TouchableOpacity,
   View,
-  ScrollView,
-  KeyboardAvoidingView,
-  Platform,
-  Alert,
 } from 'react-native';
 import { Category, Transaction } from '../parser';
-import { theme } from '../theme';
+import { Theme, CATEGORY_META } from '../theme';
+import { useTheme, useThemedStyles } from '../themeContext';
+import AmountKeypad from './AmountKeypad';
 
 interface AddTransactionModalProps {
   visible: boolean;
@@ -21,12 +22,7 @@ interface AddTransactionModalProps {
 }
 
 const CATEGORIES: Category[] = [
-  'Food & Dining',
-  'Shopping',
-  'Transportation',
-  'Salary',
-  'UPI Transfers',
-  'Other',
+  'Food & Dining', 'Shopping', 'Transportation', 'Salary', 'UPI Transfers', 'Other',
 ];
 
 export default function AddTransactionModal({
@@ -34,28 +30,40 @@ export default function AddTransactionModal({
   onClose,
   onAdd,
 }: AddTransactionModalProps) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
   const [amount, setAmount] = useState('');
   const [description, setDescription] = useState('');
   const [type, setType] = useState<'debit' | 'credit'>('debit');
   const [category, setCategory] = useState<Category>('Other');
+  const [step, setStep] = useState<'amount' | 'details'>('amount');
+
+  const reset = () => {
+    setAmount('');
+    setDescription('');
+    setType('debit');
+    setCategory('Other');
+    setStep('amount');
+  };
+
+  const handleClose = () => { reset(); onClose(); };
+
+  const handleNext = () => {
+    const n = parseFloat(amount);
+    if (isNaN(n) || n <= 0) return;
+    setStep('details');
+  };
 
   const handleSubmit = () => {
-    const parsedAmount = parseFloat(amount.replace(/[^0-9.]/g, ''));
-    if (isNaN(parsedAmount) || parsedAmount <= 0) {
-      Alert.alert('Invalid Amount', 'Please enter a valid amount.');
-      return;
-    }
-    if (!description.trim()) {
-      Alert.alert('Missing Description', 'Please enter a description.');
-      return;
-    }
+    const parsedAmount = parseFloat(amount);
+    if (isNaN(parsedAmount) || parsedAmount <= 0 || !description.trim()) return;
 
     const newTx: Transaction = {
       id: `MAN_${Date.now()}`,
       amount: parsedAmount,
       type,
       date: new Date().toISOString(),
-      balance: 0, // Manual transactions don't trace bank account balance
+      balance: 0,
       description: description.trim(),
       sender: 'manual',
       category,
@@ -64,267 +72,359 @@ export default function AddTransactionModal({
     };
 
     onAdd(newTx);
-    resetForm();
+    reset();
     onClose();
   };
 
-  const resetForm = () => {
-    setAmount('');
-    setDescription('');
-    setType('debit');
-    setCategory('Other');
-  };
+  const isDebit = type === 'debit';
+  const accentColor = isDebit ? theme.colors.danger : theme.colors.success;
+  const amtDisplay = amount ? `Br ${parseFloat(amount).toLocaleString('en-US', { minimumFractionDigits: amount.includes('.') ? (amount.split('.')[1]?.length ?? 0) : 0 })}` : 'Br 0';
 
   return (
-    <Modal
-      animationType="slide"
-      transparent={true}
-      visible={visible}
-      onRequestClose={onClose}
-    >
+    <Modal animationType="slide" transparent visible={visible} onRequestClose={handleClose}>
       <KeyboardAvoidingView
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.modalOverlay}
+        style={styles.overlay}
       >
-        <TouchableOpacity style={styles.dismissArea} onPress={onClose} activeOpacity={1} />
-        
-        <View style={styles.modalContent}>
-          <View style={styles.header}>
-            <Text style={styles.title}>Add Transaction</Text>
-            <TouchableOpacity onPress={onClose} style={styles.closeButton}>
-              <Text style={styles.closeButtonText}>✕</Text>
-            </TouchableOpacity>
+        <TouchableOpacity style={styles.dismiss} onPress={handleClose} activeOpacity={1} />
+        <View style={styles.sheet}>
+          {/* Handle */}
+          <View style={styles.handle} />
+
+          {/* Type toggle */}
+          <View style={styles.typeWrap}>
+            {(['debit', 'credit'] as const).map(t => {
+              const active = type === t;
+              const col = t === 'debit' ? theme.colors.danger : theme.colors.success;
+              return (
+                <TouchableOpacity
+                  key={t}
+                  style={[
+                    styles.typeBtn,
+                    active && { backgroundColor: col + '20', borderColor: col },
+                  ]}
+                  onPress={() => setType(t)}
+                  accessibilityRole="button"
+                  accessibilityLabel={t === 'debit' ? 'Expense' : 'Income'}
+                >
+                  <Text style={styles.typeEmoji}>{t === 'debit' ? '📉' : '📈'}</Text>
+                  <Text style={[styles.typeText, active && { color: col, fontWeight: '800' }]}>
+                    {t === 'debit' ? 'Expense' : 'Income'}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
 
-          <ScrollView contentContainerStyle={styles.scrollContainer} keyboardShouldPersistTaps="handled">
-            {/* Type Selector */}
-            <View style={styles.typeContainer}>
+          {step === 'amount' ? (
+            <>
+              {/* Big amount display */}
+              <View style={styles.amtDisplay}>
+                <Text style={[styles.amtText, { color: accentColor }]} numberOfLines={1} adjustsFontSizeToFit>
+                  {amount || '0'}
+                </Text>
+                <Text style={styles.amtCurrency}>ETB</Text>
+              </View>
+
+              {/* Keypad */}
+              <AmountKeypad value={amount} onChange={setAmount} />
+
+              {/* Next */}
               <TouchableOpacity
                 style={[
-                  styles.typeButton,
-                  type === 'debit' && styles.typeButtonDebitActive,
+                  styles.nextBtn,
+                  { backgroundColor: parseFloat(amount) > 0 ? theme.colors.primaryDeep : theme.colors.surfaceElevated },
                 ]}
-                onPress={() => setType('debit')}
+                onPress={handleNext}
+                disabled={!amount || parseFloat(amount) <= 0}
+                accessibilityLabel="Continue to details"
               >
-                <Text
-                  style={[
-                    styles.typeButtonText,
-                    type === 'debit' && styles.typeButtonTextActive,
-                  ]}
-                >
-                  Expense (Debit)
+                <Text style={[
+                  styles.nextBtnText,
+                  { color: parseFloat(amount) > 0 ? theme.colors.onPrimary : theme.colors.textMuted },
+                ]}>
+                  Continue →
                 </Text>
               </TouchableOpacity>
+            </>
+          ) : (
+            <ScrollView
+              contentContainerStyle={styles.detailsBody}
+              keyboardShouldPersistTaps="handled"
+              showsVerticalScrollIndicator={false}
+            >
+              {/* Amount recap pill */}
               <TouchableOpacity
-                style={[
-                  styles.typeButton,
-                  type === 'credit' && styles.typeButtonCreditActive,
-                ]}
-                onPress={() => setType('credit')}
+                style={[styles.amtPill, { backgroundColor: accentColor + '18', borderColor: accentColor }]}
+                onPress={() => setStep('amount')}
+                accessibilityLabel="Edit amount"
               >
-                <Text
-                  style={[
-                    styles.typeButtonText,
-                    type === 'credit' && styles.typeButtonTextActive,
-                  ]}
-                >
-                  Income (Credit)
+                <Text style={[styles.amtPillText, { color: accentColor }]}>
+                  {isDebit ? '-' : '+'}{amtDisplay}
                 </Text>
+                <Text style={[styles.amtPillEdit, { color: accentColor }]}>✏️</Text>
               </TouchableOpacity>
-            </View>
 
-            {/* Amount Field */}
-            <Text style={styles.label}>Amount (ETB)</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="0.00"
-              placeholderTextColor={theme.colors.textMuted}
-              keyboardType="decimal-pad"
-              value={amount}
-              onChangeText={setAmount}
-            />
-
-            {/* Description Field */}
-            <Text style={styles.label}>Description</Text>
-            <TextInput
-              style={styles.input}
-              placeholder="e.g., Grocery Shopping, Salary deposit"
-              placeholderTextColor={theme.colors.textMuted}
-              value={description}
-              onChangeText={setDescription}
-            />
-
-            {/* Category Grid */}
-            <Text style={styles.label}>Category</Text>
-            <View style={styles.categoryGrid}>
-              {CATEGORIES.map((cat) => {
-                const isSelected = category === cat;
-                return (
-                  <TouchableOpacity
-                    key={cat}
-                    style={[
-                      styles.categoryCard,
-                      isSelected && styles.categoryCardActive,
-                    ]}
-                    onPress={() => setCategory(cat)}
-                  >
-                    <Text
-                      style={[
-                        styles.categoryText,
-                        isSelected && styles.categoryTextActive,
-                      ]}
+              {/* Description — one input, with quick-pick chips below */}
+              <Text style={styles.fieldLabel}>Description</Text>
+              <TextInputInline value={description} onChange={setDescription} />
+              <View style={styles.descRow}>
+                {['Salary', 'Transfer', 'Shop', 'Food', 'Taxi', 'Fuel'].map(s => {
+                  const active = description === s;
+                  return (
+                    <TouchableOpacity
+                      key={s}
+                      style={[styles.descChip, active && styles.descChipActive]}
+                      onPress={() => setDescription(active ? '' : s)}
+                      accessibilityLabel={`Set description to ${s}`}
                     >
-                      {cat}
-                    </Text>
-                  </TouchableOpacity>
-                );
-              })}
-            </View>
+                      <Text style={[styles.descChipText, active && styles.descChipTextActive]}>{s}</Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
 
-            {/* Submit Button */}
-            <TouchableOpacity style={styles.submitButton} onPress={handleSubmit}>
-              <Text style={styles.submitButtonText}>Save Transaction</Text>
-            </TouchableOpacity>
-          </ScrollView>
+              {/* Category grid */}
+              <Text style={styles.fieldLabel}>Category</Text>
+              <View style={styles.catGrid}>
+                {CATEGORIES.map(cat => {
+                  const meta = CATEGORY_META[cat] ?? { emoji: '🏷️', color: theme.colors.primary };
+                  const active = category === cat;
+                  return (
+                    <TouchableOpacity
+                      key={cat}
+                      style={[
+                        styles.catItem,
+                        active && { borderColor: meta.color, backgroundColor: meta.color + '18' },
+                      ]}
+                      onPress={() => setCategory(cat)}
+                      accessibilityLabel={`Category ${cat}`}
+                      accessibilityRole="button"
+                    >
+                      <View style={[styles.catIconCircle, { backgroundColor: meta.color + '20' }]}>
+                        <Text style={{ fontSize: 22 }}>{meta.emoji}</Text>
+                      </View>
+                      <Text
+                        style={[styles.catLabel, active && { color: meta.color, fontWeight: '700' }]}
+                        numberOfLines={1}
+                      >
+                        {cat}
+                      </Text>
+                    </TouchableOpacity>
+                  );
+                })}
+              </View>
+
+              {/* Save */}
+              <TouchableOpacity
+                style={[
+                  styles.saveBtn,
+                  { backgroundColor: description.trim() ? theme.colors.primaryDeep : theme.colors.surfaceElevated },
+                ]}
+                onPress={handleSubmit}
+                disabled={!description.trim()}
+                accessibilityLabel="Save transaction"
+              >
+                <Text style={[
+                  styles.saveBtnText,
+                  { color: description.trim() ? theme.colors.onPrimary : theme.colors.textMuted },
+                ]}>
+                  Save Transaction
+                </Text>
+              </TouchableOpacity>
+            </ScrollView>
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>
   );
 }
 
-const styles = StyleSheet.create({
-  modalOverlay: {
-    flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
-    justifyContent: 'flex-end',
-  },
-  dismissArea: {
-    flex: 1,
-  },
-  modalContent: {
-    backgroundColor: theme.colors.background,
+// Inline real TextInput component
+function TextInputInline({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { theme } = useTheme();
+  const styles = useThemedStyles(createStyles);
+  return (
+    <TextInput
+      style={styles.realInput}
+      value={value}
+      onChangeText={onChange}
+      placeholder="e.g. Grocery, Salary deposit…"
+      placeholderTextColor={theme.colors.textMuted}
+    />
+  );
+}
+
+const createStyles = (theme: Theme) => StyleSheet.create({
+  overlay: { flex: 1, justifyContent: 'flex-end' },
+  dismiss: { flex: 1, backgroundColor: 'rgba(0,0,0,0.55)' },
+  sheet: {
+    backgroundColor: theme.colors.surfaceSecondary,
     borderTopLeftRadius: theme.borderRadius.xl,
     borderTopRightRadius: theme.borderRadius.xl,
-    borderWidth: 1,
-    borderColor: theme.colors.border,
-    maxHeight: '85%',
+    paddingTop: 12,
+    paddingBottom: 36,
+    maxHeight: '92%',
   },
-  header: {
+  handle: {
+    width: 36,
+    height: 4,
+    backgroundColor: theme.colors.border,
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
+  },
+
+  // Type toggle
+  typeWrap: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: theme.spacing.md,
-    borderBottomWidth: 1,
-    borderBottomColor: theme.colors.border,
+    gap: 10,
+    paddingHorizontal: 20,
+    marginBottom: 16,
   },
-  title: {
-    color: theme.colors.text,
+  typeBtn: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 6,
+    paddingVertical: 12,
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    backgroundColor: theme.colors.surface,
+  },
+  typeEmoji: { fontSize: 16 },
+  typeText: { color: theme.colors.textMuted, fontSize: 14, fontWeight: '600' },
+
+  // Amount display (step 1)
+  amtDisplay: {
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    marginBottom: 12,
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+  },
+  amtText: {
+    fontSize: 54,
+    fontWeight: '900',
+    letterSpacing: -2,
+  },
+  amtCurrency: {
+    color: theme.colors.textMuted,
     fontSize: 20,
     fontWeight: '700',
+    alignSelf: 'flex-end',
+    marginBottom: 8,
   },
-  closeButton: {
-    padding: theme.spacing.xs,
-  },
-  closeButtonText: {
-    color: theme.colors.textMuted,
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-  scrollContainer: {
-    padding: theme.spacing.md,
-  },
-  label: {
-    color: theme.colors.textMuted,
-    fontSize: 14,
-    fontWeight: '600',
-    marginBottom: theme.spacing.sm,
-    marginTop: theme.spacing.sm,
-  },
-  input: {
-    backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
-    borderWidth: 1,
+  nextBtn: {
+    marginHorizontal: 20,
+    marginTop: 12,
+    height: 52,
     borderRadius: theme.borderRadius.md,
-    color: theme.colors.text,
-    padding: theme.spacing.md,
-    fontSize: 16,
-    marginBottom: theme.spacing.sm,
-  },
-  typeContainer: {
-    flexDirection: 'row',
-    backgroundColor: theme.colors.surface,
-    borderRadius: theme.borderRadius.md,
-    padding: theme.spacing.xs,
-    marginBottom: theme.spacing.md,
-  },
-  typeButton: {
-    flex: 1,
-    paddingVertical: theme.spacing.sm,
+    justifyContent: 'center',
     alignItems: 'center',
-    borderRadius: theme.borderRadius.sm,
+    ...theme.shadow.accent,
   },
-  typeButtonDebitActive: {
-    backgroundColor: 'rgba(239, 68, 68, 0.2)',
-    borderWidth: 1,
-    borderColor: theme.colors.danger,
+  nextBtnText: { fontSize: 17, fontWeight: '800' },
+
+  // Details step
+  detailsBody: { paddingHorizontal: 20, paddingBottom: 16 },
+  amtPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'center',
+    borderWidth: 1.5,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: 20,
+    paddingVertical: 10,
+    marginBottom: 20,
+    gap: 8,
   },
-  typeButtonCreditActive: {
-    backgroundColor: 'rgba(16, 185, 129, 0.2)',
-    borderWidth: 1,
-    borderColor: theme.colors.success,
-  },
-  typeButtonText: {
+  amtPillText: { fontSize: 22, fontWeight: '800' },
+  amtPillEdit: { fontSize: 16 },
+  fieldLabel: {
     color: theme.colors.textMuted,
-    fontWeight: '600',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.8,
+    textTransform: 'uppercase',
+    marginBottom: 10,
+    marginTop: 4,
   },
-  typeButtonTextActive: {
-    color: theme.colors.text,
-  },
-  categoryGrid: {
+  descRow: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginBottom: theme.spacing.lg,
+    gap: 8,
+    marginTop: 10,
+    marginBottom: 6,
   },
-  categoryCard: {
-    width: '48%',
+  descChip: {
     backgroundColor: theme.colors.surface,
-    borderColor: theme.colors.border,
     borderWidth: 1,
-    padding: theme.spacing.md,
-    borderRadius: theme.borderRadius.md,
-    alignItems: 'center',
-    marginBottom: theme.spacing.sm,
+    borderColor: theme.colors.border,
+    borderRadius: theme.borderRadius.full,
+    paddingHorizontal: 12,
+    paddingVertical: 7,
   },
-  categoryCardActive: {
-    backgroundColor: 'rgba(99, 102, 241, 0.15)',
+  descChipActive: {
+    backgroundColor: theme.colors.primarySubtle,
     borderColor: theme.colors.primary,
-    borderWidth: 1.5,
   },
-  categoryText: {
-    color: theme.colors.textMuted,
-    fontWeight: '500',
-    fontSize: 14,
-  },
-  categoryTextActive: {
-    color: theme.colors.text,
-    fontWeight: '600',
-  },
-  submitButton: {
-    backgroundColor: theme.colors.primary,
-    padding: theme.spacing.md,
+  descChipText: { color: theme.colors.textSecondary, fontSize: 13, fontWeight: '600' },
+  descChipTextActive: { color: theme.colors.primary, fontWeight: '700' },
+  realInput: {
+    backgroundColor: theme.colors.surface,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: theme.borderRadius.md,
-    alignItems: 'center',
-    marginTop: theme.spacing.sm,
-    shadowColor: theme.colors.primary,
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.3,
-    shadowRadius: 6,
-    elevation: 4,
-  },
-  submitButtonText: {
+    paddingHorizontal: 14,
+    paddingVertical: 12,
     color: theme.colors.text,
-    fontWeight: '700',
-    fontSize: 16,
+    fontSize: 15,
   },
+
+  // Category grid
+  catGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 10,
+    marginBottom: 20,
+  },
+  catItem: {
+    flexBasis: '30%',
+    flexGrow: 1,
+    maxWidth: '33%',
+    borderRadius: theme.borderRadius.md,
+    borderWidth: 1.5,
+    borderColor: theme.colors.border,
+    padding: 12,
+    alignItems: 'center',
+    gap: 6,
+    backgroundColor: theme.colors.surface,
+  },
+  catIconCircle: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  catLabel: {
+    color: theme.colors.textMuted,
+    fontSize: 10,
+    fontWeight: '600',
+    textAlign: 'center',
+  },
+
+  // Save
+  saveBtn: {
+    height: 54,
+    borderRadius: theme.borderRadius.md,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...theme.shadow.accent,
+  },
+  saveBtnText: { fontSize: 16, fontWeight: '800' },
 });
